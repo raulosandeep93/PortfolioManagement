@@ -24,7 +24,26 @@
       <span class="brand-name">FolioSense</span>
     </div>
     <div class="nav-center" id="nav-person-tabs" style="display:none"></div>
+    <div class="nav-center" id="nav-screen-tabs" style="display:none">
+      <button class="screen-tab active" data-screen="overview">Overview</button>
+      <button class="screen-tab" data-screen="goals">Goals</button>
+      <button class="screen-tab" data-screen="mf">Mutual Fund</button>
+      <button class="screen-tab" data-screen="stocks-in">Indian Stocks</button>
+      <button class="screen-tab" data-screen="stocks-fn">Foreign Stocks</button>
+      <button class="screen-tab" data-screen="savings">Bank Savings</button>
+      <button class="screen-tab" data-screen="nps">NPS</button>
+    </div>
     <div class="nav-actions">
+      <input type="file" id="nav-import-input" accept=".json" style="display:none" />
+      <button id="nav-export-btn" class="btn btn-ghost" style="display:none" title="Download a full backup of all your data (portfolios, goals, targets)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        Export Backup
+        <span class="backup-reminder-dot" id="export-reminder-dot"></span>
+      </button>
+      <button id="nav-import-btn" class="btn btn-ghost" style="display:none" title="Restore your data from a previous backup file">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 14l5-5 5 5M12 9v12"/></svg>
+        Import Backup
+      </button>
       <button id="nav-add-btn" class="btn btn-ghost" style="display:none">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
         Add Statement
@@ -36,141 +55,233 @@
     </div>
   </nav>
 
-  <!-- ══════════════════════════════════════════════════ UPLOAD SCREEN -->
-  <section id="upload-screen" class="screen active">
-    <div class="upload-bg-grid"></div>
-    <div class="upload-hero">
-      <div class="upload-badge">
-        <span class="badge-dot"></span>
-        100% Private — Runs entirely in your browser
-      </div>
-      <h1 class="hero-title">
-        Your Mutual Fund Portfolio,<br/>
-        <span class="hero-gradient">Fully Analyzed</span>
-      </h1>
-      <p class="hero-subtitle">Upload your CAS statement from CAMS / KFintech and get instant insights — XIRR, live NAV, gain/loss, holdings breakdown and more.</p>
-
-      <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Upload CAS PDF">
-        <input type="file" id="file-input" accept=".pdf" multiple hidden />
-        <div class="drop-icon">
-          <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="8" y="12" width="40" height="48" rx="4" fill="rgba(16,185,129,0.1)" stroke="rgba(16,185,129,0.4)" stroke-width="1.5"/>
-            <path d="M20 32 h16 M28 24 v16" stroke="#10b981" stroke-width="2" stroke-linecap="round"/>
-            <path d="M44 4 h8 a4 4 0 0 1 4 4 v12" stroke="rgba(16,185,129,0.6)" stroke-width="1.5" stroke-linecap="round"/>
-            <text x="14" y="52" font-family="Inter" font-size="7" fill="rgba(16,185,129,0.7)" font-weight="600">PDF</text>
-          </svg>
+  <!-- ══════════════════════════════════════════════════ OVERVIEW SCREEN -->
+  <section id="screen-overview" class="screen">
+    <div class="overview-grid" id="ov-content" style="display:none">
+      
+      <!-- Row 1 Col 1: Portfolio Summary -->
+      <div class="ov-item ov-summary">
+        <h2 class="lh-title">Portfolio Overview</h2>
+        <p class="lh-subtitle">Real-time status of your net worth and goals.</p>
+        
+        <div class="ov-summary-cards">
+          <div class="lh-networth">
+            <div class="ln-label">Total Net Worth</div>
+            <div class="ln-value" id="landing-total-val">₹0</div>
+            <div class="ln-delta" id="landing-total-delta">0% overall return</div>
+          </div>
+          <div class="lh-right">
+            <div class="chart-mini-wrap">
+              <canvas id="chart-landing-allocation"></canvas>
+            </div>
+          </div>
         </div>
-        <div class="drop-text">
-          <span class="drop-primary">Drop your CAS PDF here</span>
-          <span class="drop-secondary">or click to browse — multiple files & persons supported</span>
-        </div>
-        <button class="btn btn-primary btn-upload" id="browse-btn">Choose Files</button>
-        <div class="drop-hint">Password-protected PDFs supported &nbsp;·&nbsp; CAMS + KFintech format</div>
       </div>
 
-      <div class="feature-pills">
-        <span class="pill"><span class="pill-icon">📊</span>XIRR per fund</span>
-        <span class="pill"><span class="pill-icon">📡</span>Live NAV</span>
-        <span class="pill"><span class="pill-icon">👥</span>Multi-person</span>
-        <span class="pill"><span class="pill-icon">🔒</span>100% offline</span>
+      <!-- Row 1 Col 2: Asset Allocation -->
+      <div class="ov-item ov-assets landing-section">
+        <h3 class="ls-title">Asset Allocation</h3>
+        <div class="ls-assets">
+          <div class="asset-card active" data-target="mf">
+            <div class="ac-icon">📈</div>
+            <div class="ac-info"><span class="ac-label">Mutual Funds</span><span class="ac-val" id="ls-val-mf">₹0</span></div>
+          </div>
+          <div class="asset-card" data-target="stocks-in">
+            <div class="ac-icon">🏢</div>
+            <div class="ac-info"><span class="ac-label">Indian Stocks</span><span class="ac-val">₹0</span></div>
+          </div>
+          <div class="asset-card" data-target="nps">
+            <div class="ac-icon">🏦</div>
+            <div class="ac-info"><span class="ac-label">NPS Holdings</span><span class="ac-val">₹0</span></div>
+          </div>
+          <div class="asset-card" data-target="stocks-fn">
+            <div class="ac-icon">🌎</div>
+            <div class="ac-info"><span class="ac-label">Foreign Equities</span><span class="ac-val">₹0</span></div>
+          </div>
+          <div class="asset-card" data-target="savings">
+            <div class="ac-icon">💰</div>
+            <div class="ac-info"><span class="ac-label">Bank Savings</span><span class="ac-val">₹0</span></div>
+          </div>
+        </div>
+      </div>
+
+
+
+    </div>
+
+    <div id="ov-empty" class="upload-screen">
+      <div class="upload-bg-grid"></div>
+      <div class="upload-hero">
+        <div class="upload-badge"><span class="badge-dot"></span>Welcome to FolioSense</div>
+        <h1 class="hero-title">Start Your Journey</h1>
+        <p class="hero-subtitle">You haven't added any data yet. Fill the details in the other tabs to see your overview.</p>
+        <button class="btn btn-primary btn-tab-trigger" data-target="mf">Go to Mutual Fund</button>
       </div>
     </div>
   </section>
 
-  <!-- ════════════════════════════════════════════════ DASHBOARD SCREEN -->
-  <section id="dashboard-screen" class="screen" style="display:none">
-
-    <!-- Summary Cards -->
-    <div class="summary-row" id="summary-cards">
-      <div class="summary-card" id="sc-invested">
-        <div class="sc-label">Total Invested</div>
-        <div class="sc-value" id="sc-invested-val">₹0</div>
-        <div class="sc-sub" id="sc-invested-sub"></div>
+  <!-- ══════════════════════════════════════════════════ GOALS SCREEN -->
+  <section id="screen-goals" class="screen" style="display:none">
+    <div id="goals-dashboard" style="display:none; padding:24px; flex-direction:column; gap:24px; width:100%">
+      <div class="table-header-row" style="margin-bottom: 8px">
+        <div>
+          <h1 class="hero-title" style="font-size: 36px">Goal Tracking</h1>
+          <p class="hero-subtitle">Visualise and plan your long-term financial milestones.</p>
+        </div>
+        <button id="btn-add-goal-dedicated" class="btn btn-primary">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+          Add New Goal
+        </button>
       </div>
-      <div class="summary-card" id="sc-current">
-        <div class="sc-label">Current Value</div>
-        <div class="sc-value" id="sc-current-val">₹0</div>
-        <div class="sc-sub" id="sc-current-sub">via live NAV</div>
-      </div>
-      <div class="summary-card gain" id="sc-gain">
-        <div class="sc-label">Total Gain / Loss</div>
-        <div class="sc-value" id="sc-gain-val">₹0</div>
-        <div class="sc-sub" id="sc-gain-pct"></div>
-      </div>
-      <div class="summary-card xirr" id="sc-xirr">
-        <div class="sc-label">Portfolio XIRR</div>
-        <div class="sc-value" id="sc-xirr-val">—</div>
-        <div class="sc-sub">Annualised return</div>
-      </div>
+      
+      <div id="goals-container"></div>
     </div>
 
-    <!-- Charts Row -->
-    <div class="charts-row" id="charts-row">
-      <div class="chart-card">
-        <div class="chart-card-header">
-          <h3 class="chart-title">AMC Allocation</h3>
-          <span class="chart-subtitle">by current value</span>
-        </div>
-        <div class="chart-wrap"><canvas id="chart-amc"></canvas></div>
-      </div>
-      <div class="chart-card">
-        <div class="chart-card-header">
-          <h3 class="chart-title">Category Split</h3>
-          <span class="chart-subtitle">Equity · Debt · Hybrid</span>
-        </div>
-        <div class="chart-wrap"><canvas id="chart-cat"></canvas></div>
-      </div>
-      <div class="chart-card">
-        <div class="chart-card-header">
-          <h3 class="chart-title">Top Holdings</h3>
-          <span class="chart-subtitle">by current value</span>
-        </div>
-        <div class="chart-wrap"><canvas id="chart-top"></canvas></div>
+    <div id="goals-empty" class="upload-screen" style="display:none">
+      <div class="upload-bg-grid"></div>
+      <div class="upload-hero">
+        <div class="upload-badge"><span class="badge-dot"></span>Financial Planning</div>
+        <h1 class="hero-title">No Goals Found</h1>
+        <p class="hero-subtitle">You haven't defined any financial goals yet. Plan your future by setting targets for retirement, education, or other milestones.</p>
+        <button class="btn btn-primary" onclick="UI.openGoalManager()">Create My First Goal</button>
       </div>
     </div>
+  </section>
 
-    <!-- Holdings Table -->
-    <div class="table-section">
-      <div class="table-header-row">
-        <h2 class="table-heading">Holdings</h2>
-        <div class="table-controls">
-          <div class="search-wrap">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <input type="text" id="table-search" placeholder="Search fund or AMC…" />
+  <!-- ══════════════════════════════════════════════════ MUTUAL FUND SCREEN -->
+  <section id="screen-mf" class="screen" style="display:none">
+    <div id="mf-empty" class="upload-screen" style="display:none">
+      <div class="upload-bg-grid"></div>
+      <div class="upload-hero">
+        <div class="upload-badge"><span class="badge-dot"></span>100% Private — Runs entirely in your browser</div>
+        <h1 class="hero-title">Your Mutual Fund Portfolio,<br/><span class="hero-gradient">Fully Analyzed</span></h1>
+        <p class="hero-subtitle">Upload your CAS statement from CAMS / KFintech and get instant insights — XIRR, live NAV, gain/loss, holdings breakdown and more.</p>
+        
+        <div id="drop-zone" class="drop-zone" role="button" tabindex="0">
+          <input type="file" id="file-input" accept=".pdf" multiple hidden />
+          <div class="drop-icon">
+            <svg viewBox="0 0 64 64" fill="none"><rect x="8" y="12" width="40" height="48" rx="4" fill="rgba(16,185,129,0.1)" stroke="rgba(16,185,129,0.4)" stroke-width="1.5"/><path d="M20 32 h16 M28 24 v16" stroke="#10b981" stroke-width="2" stroke-linecap="round"/><text x="14" y="52" font-family="Inter" font-size="7" fill="rgba(16,185,129,0.7)" font-weight="600">PDF</text></svg>
           </div>
-          <select id="table-filter-cat" class="filter-select">
-            <option value="">All Categories</option>
-            <option value="EQUITY">Equity</option>
-            <option value="DEBT">Debt</option>
-            <option value="HYBRID">Hybrid</option>
-            <option value="OTHER">Other</option>
-          </select>
-          <select id="table-filter-person" class="filter-select" style="display:none">
-            <option value="">All Persons</option>
-          </select>
+          <div class="drop-text">
+            <span class="drop-primary">Drop your CAS PDF here</span>
+            <span class="drop-secondary">or click to browse — multiple files & persons supported</span>
+          </div>
+          <button class="btn btn-primary btn-upload" id="browse-btn">Choose Files</button>
+          <div class="drop-hint">Password-protected PDFs supported &nbsp;·&nbsp; CAMS + KFintech format</div>
+        </div>
+
+        <div class="feature-pills">
+          <span class="pill"><span class="pill-icon">📊</span>XIRR per fund</span>
+          <span class="pill"><span class="pill-icon">📡</span>Live NAV</span>
+          <span class="pill"><span class="pill-icon">👥</span>Multi-person</span>
+          <span class="pill"><span class="pill-icon">🔒</span>100% offline</span>
+        </div>
+
+        <div style="margin-top:32px;display:flex;gap:12px;align-items:center;justify-content:center">
+          <span style="color:var(--text3);font-size:13px">Already have a backup?</span>
+          <button class="btn btn-ghost" onclick="document.getElementById('nav-import-btn').click()">Import JSON</button>
         </div>
       </div>
-      <div class="table-wrap">
-        <table id="holdings-table">
-          <thead>
-            <tr>
-              <th class="sortable th-name" data-col="name">Fund Name <span class="sort-icon">↕</span></th>
-              <th class="sortable th-person" data-col="person" style="display:none">Owner <span class="sort-icon">↕</span></th>
-              <th class="sortable th-goal" data-col="goal">Goal <span class="sort-icon">↕</span></th>
-              <th class="sortable th-units" data-col="units">Units <span class="sort-icon">↕</span></th>
-              <th class="sortable th-nav" data-col="nav">NAV (CAS) <span class="sort-icon">↕</span></th>
-              <th class="sortable th-lnav" data-col="liveNav">Live NAV <span class="sort-icon">↕</span></th>
-              <th class="sortable th-invested" data-col="invested">Invested <span class="sort-icon">↕</span></th>
-              <th class="sortable th-current" data-col="current">Current Value <span class="sort-icon">↕</span></th>
-              <th class="sortable th-gain" data-col="gain">Gain / Loss <span class="sort-icon">↕</span></th>
-              <th class="sortable th-xirr" data-col="xirr">XIRR <span class="sort-icon">↕</span></th>
-            </tr>
-          </thead>
-          <tbody id="holdings-tbody"></tbody>
-        </table>
-      </div>
-      <div id="table-empty" class="table-empty" style="display:none">No funds match your filter.</div>
     </div>
+
+    <div id="mf-dashboard" style="display:none; padding:24px; flex-direction:column; gap:24px; width:100%">
+      <div class="summary-row" id="summary-cards">
+        <div class="summary-card" id="sc-invested"><div class="sc-label">Total Invested</div><div class="sc-value" id="sc-invested-val">₹0</div><div class="sc-sub" id="sc-invested-sub"></div></div>
+        <div class="summary-card" id="sc-current"><div class="sc-label">Current Value</div><div class="sc-value" id="sc-current-val">₹0</div><div class="sc-sub">via live NAV</div></div>
+        <div class="summary-card gain" id="sc-gain"><div class="sc-label">Total Gain / Loss</div><div class="sc-value" id="sc-gain-val">₹0</div><div class="sc-sub" id="sc-gain-pct"></div></div>
+        <div class="summary-card xirr" id="sc-xirr"><div class="sc-label">Portfolio XIRR</div><div class="sc-value" id="sc-xirr-val">—</div><div class="sc-sub">Annualised return</div></div>
+      </div>
+      <div class="charts-row" id="charts-row">
+        <div class="chart-card"><div class="chart-card-header"><h3 class="chart-title">AMC Allocation</h3></div><div class="chart-wrap"><canvas id="chart-amc"></canvas></div></div>
+        <div class="chart-card"><div class="chart-card-header"><h3 class="chart-title">Category Split</h3></div><div class="chart-wrap"><canvas id="chart-cat"></canvas></div></div>
+        <div class="chart-card"><div class="chart-card-header"><h3 class="chart-title">Top Holdings</h3></div><div class="chart-wrap"><canvas id="chart-top"></canvas></div></div>
+      </div>
+      <div class="table-section">
+        <div class="table-header-row"><h2 class="table-heading">Holdings</h2><div class="table-controls"><div class="search-wrap"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" id="table-search" placeholder="Search fund…" /></div><select id="table-filter-cat" class="filter-select"><option value="">All Categories</option><option value="EQUITY">Equity</option><option value="DEBT">Debt</option><option value="HYBRID">Hybrid</option><option value="OTHER">Other</option></select><select id="table-filter-person" class="filter-select" style="display:none"><option value="">All Persons</option></select></div></div>
+        <div class="table-wrap"><table id="holdings-table"><thead><tr><th class="sortable" data-col="name">Fund Name</th><th class="sortable th-person" data-col="person" style="display:none">Owner</th><th class="sortable" data-col="goal">Goal</th><th class="sortable" data-col="units">Units</th><th class="sortable" data-col="nav">Nav (CAS)</th><th class="sortable" data-col="liveNav">Live Nav</th><th class="sortable" data-col="invested">Invested</th><th class="sortable" data-col="current">Current</th><th class="sortable" data-col="gain">Gain/Loss</th><th class="sortable" data-col="xirr">XIRR</th></tr></thead><tbody id="holdings-tbody"></tbody></table></div>
+        <div id="table-empty" class="table-empty" style="display:none">No funds found.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════ DUMMY SCREENS -->
+  <section id="screen-stocks-in" class="screen dummy" style="display:none; padding:60px 24px; text-align:center">
+    <div class="upload-badge"><span class="badge-dot"></span>Coming Soon</div>
+    <h1 class="hero-title">Indian Stocks</h1>
+    <p class="hero-subtitle" style="max-width:600px; margin:0 auto">Track your NSE/BSE holdings, live P&L, and dividend income. Integration with major brokers is under development.</p>
+  </section>
+  <section id="screen-stocks-fn" class="screen dummy" style="display:none; padding:60px 24px; text-align:center">
+    <div class="upload-badge"><span class="badge-dot"></span>Coming Soon</div>
+    <h1 class="hero-title">Foreign Equities</h1>
+    <p class="hero-subtitle" style="max-width:600px; margin:0 auto">Track your US and Global stock holdings. Multi-currency support and taxation tracking are in the works.</p>
+  </section>
+  <section id="screen-savings" class="screen dummy" style="display:none; padding:60px 24px; text-align:center">
+    <div class="upload-badge"><span class="badge-dot"></span>Coming Soon</div>
+    <h1 class="hero-title">Bank Savings</h1>
+    <p class="hero-subtitle" style="max-width:600px; margin:0 auto">Securely track your savings account balances across all your banks for a complete net worth view.</p>
+  </section>
+  <!-- ══════════════════════════════════════════════════ NPS SCREEN -->
+  <section id="screen-nps" class="screen" style="display:none">
+
+    <!-- Empty / Upload state -->
+    <div id="nps-empty" class="upload-screen" style="display:none">
+      <div class="upload-bg-grid"></div>
+      <div class="upload-hero">
+        <div class="upload-badge"><span class="badge-dot"></span>National Pension System</div>
+        <h1 class="hero-title">Your NPS Portfolio,<br/><span class="hero-gradient">Fully Analyzed</span></h1>
+        <p class="hero-subtitle">Upload your Protean CRA / NPS Holdings Statement (PDF) and see your contributions, current corpus, returns, and goal progress.</p>
+
+        <div id="nps-drop-zone" class="drop-zone" role="button" tabindex="0">
+          <input type="file" id="nps-file-input" accept=".pdf" multiple hidden />
+          <div class="drop-icon">
+            <svg viewBox="0 0 64 64" fill="none"><rect x="8" y="12" width="40" height="48" rx="4" fill="rgba(99,102,241,0.1)" stroke="rgba(99,102,241,0.4)" stroke-width="1.5"/><path d="M20 32 h16 M28 24 v16" stroke="#6366f1" stroke-width="2" stroke-linecap="round"/><text x="14" y="52" font-family="Inter" font-size="7" fill="rgba(99,102,241,0.7)" font-weight="600">NPS</text></svg>
+          </div>
+          <div class="drop-text">
+            <span class="drop-primary">Drop your NPS Statement PDF here</span>
+            <span class="drop-secondary">Protean CRA (NSDL) · Holdings or Transaction statement</span>
+          </div>
+          <button class="btn btn-nps btn-upload" id="nps-browse-btn">Choose File</button>
+          <div class="drop-hint">Password-protected PDFs supported &nbsp;·&nbsp; Tier I &amp; Tier II</div>
+        </div>
+
+        <div class="feature-pills" style="margin-top:28px">
+          <span class="pill"><span class="pill-icon">🏛️</span>Tier I &amp; Tier II</span>
+          <span class="pill"><span class="pill-icon">📊</span>E / C / G Allocation</span>
+          <span class="pill"><span class="pill-icon">📈</span>XIRR Returns</span>
+          <span class="pill"><span class="pill-icon">🎯</span>Goal Tagging</span>
+          <span class="pill"><span class="pill-icon">🔒</span>100% Offline</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div id="nps-dashboard" style="display:none; padding:24px; flex-direction:column; gap:24px; width:100%; max-width:1400px; margin:0 auto; box-sizing:border-box">
+
+      <!-- Header row -->
+      <div class="table-header-row" style="margin-bottom:0">
+        <div>
+          <h2 style="font-size:22px;font-weight:700;margin:0">NPS Portfolio</h2>
+          <p style="font-size:13px;color:var(--text3);margin:4px 0 0" id="nps-pfm-label">Protean CRA</p>
+        </div>
+        <button class="btn btn-nps" id="nps-add-btn" style="display:none">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          Add Statement
+        </button>
+      </div>
+
+      <!-- Summary cards -->
+      <div class="summary-row" id="nps-summary-cards">
+        <div class="summary-card"><div class="sc-label">Total Invested</div><div class="sc-value" id="nps-sc-invested">₹0</div><div class="sc-sub">All contributions</div></div>
+        <div class="summary-card"><div class="sc-label">Current Corpus</div><div class="sc-value" id="nps-sc-current">₹0</div><div class="sc-sub">From statement NAV</div></div>
+        <div class="summary-card gain"><div class="sc-label">Total Gain / Loss</div><div class="sc-value" id="nps-sc-gain">₹0</div><div class="sc-sub" id="nps-sc-gain-pct"></div></div>
+        <div class="summary-card xirr"><div class="sc-label">Portfolio XIRR</div><div class="sc-value" id="nps-sc-xirr">—</div><div class="sc-sub">Annualised return</div></div>
+      </div>
+
+      <!-- Tier tables -->
+      <div id="nps-tiers-container"></div>
+
+    </div>
+  </section>
 
     <!-- Debug Panel -->
     <div id="debug-section" style="display:none">
@@ -191,8 +302,6 @@
         </div>
       </div>
     </div>
-
-  </section>
 
   <!-- ═══════════════════════════════════════════════ PASSWORD MODAL -->
   <div id="password-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="pw-title">
@@ -256,6 +365,7 @@
   <script src="js/analytics.js"></script>
   <script src="js/navfetch.js"></script>
   <script src="js/parser.js"></script>
+  <script src="js/nps-parser.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/app.js"></script>
 

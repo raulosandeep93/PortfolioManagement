@@ -7,22 +7,52 @@
 
   /* ══════════════════════════════════════════════════════ STATE */
   const state = {
-    portfolios:    [],   // parsed CAS data, one per uploaded file
+    portfolios:    [],   // parsed CAS data
     liveNavMap:    {},   // amfiCode → { nav, date, schemeName }
-    activePersonIdx: -1, // -1 = combined view
-    pendingFiles:  [],   // queue for password modal
-    currentFileIdx: 0,
+    activePerson:  null, // null = All, otherwise name string
+    goalsMetadata: {},   // goalName → { targetAmount, targetDate }
+    isDirtySinceExport: false,
   };
+
+  const STORAGE_KEY_STATE = 'foliosense_state';
+
+  function saveState() {
+    try {
+      const data = {
+        portfolios: state.portfolios,
+        liveNavMap: state.liveNavMap,
+        goalsMetadata: state.goalsMetadata
+      };
+      localStorage.setItem(STORAGE_KEY_STATE, JSON.stringify(data));
+    } catch (e) { console.warn('Failed to save state:', e); }
+  }
+
+  function loadState() {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_STATE);
+      if (saved) {
+        const parsed = JSON.parse(saved, (key, value) => {
+          // Revive ISO date strings back into Date objects
+          if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
+            return new Date(value);
+          }
+          return value;
+        });
+        state.portfolios = parsed.portfolios || [];
+        state.liveNavMap = parsed.liveNavMap || {};
+        state.goalsMetadata = parsed.goalsMetadata || {};
+        return true;
+      }
+    } catch (e) { console.warn('Failed to load state:', e); }
+    return false;
+  }
 
   /* ══════════════════════════════ PASSWORD MODAL MANAGEMENT */
   let _pwResolve = null;
-  let _pwReject  = null;
 
   function promptPassword(filename) {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       _pwResolve = resolve;
-      _pwReject  = reject;
-
       document.getElementById('pw-filename').textContent = filename;
       document.getElementById('pw-input').value          = '';
       document.getElementById('pw-error').style.display  = 'none';
@@ -34,7 +64,6 @@
   function closePasswordModal() {
     document.getElementById('password-modal').style.display = 'none';
     _pwResolve = null;
-    _pwReject  = null;
   }
 
   /* ════════════════════════════════════════ PROCESS ONE FILE */
@@ -45,287 +74,243 @@
 
     while (attempt < 5) {
       try {
-        UI.setLoading(
-          `Parsing ${file.name}…`,
-          attempt === 0 ? 'Extracting text from PDF' : 'Retrying with password…',
-          10
-        );
+        UI.setLoading(`Parsing ${file.name}…`, attempt === 0 ? 'Extracting text' : 'Retrying…', 10);
         parsed = await CASParser.parsePDF(file, password);
-        break; // success
+        break;
       } catch (err) {
         const msg = err?.message || String(err);
-
-        // PDF.js throws PasswordException for wrong/missing password
         if (msg.includes('password') || msg.includes('Password') || (err?.name === 'PasswordException')) {
-          try {
-            password = await promptPassword(file.name);
-            if (password === '__SKIP__') return null; // user skipped
-            // Show wrong password error on retry
-            if (attempt > 0) {
-              document.getElementById('pw-error').style.display = '';
-            }
-            attempt++;
-          } catch (_) {
-            return null; // modal dismissed
-          }
+          password = await promptPassword(file.name);
+          if (password === '__SKIP__') return null;
+          if (attempt > 0) document.getElementById('pw-error').style.display = '';
+          attempt++;
         } else {
-          UI.toast('error', 'Parse Error', `Could not read ${file.name}: ${msg.slice(0,100)}`);
+          UI.toast('error', 'Parse Error', `Could not read ${file.name}`);
           return null;
         }
       }
     }
-
-    if (!parsed) return null;
-
-    // Basic sanity: warn if no folios found
-    const totalSchemes = (parsed.folios || []).reduce((s, f) => s + (f.schemes || []).length, 0);
-    if (totalSchemes === 0) {
-      UI.toast('warning', 'No Holdings Found',
-        `${file.name} was parsed but no fund holdings were detected. ` +
-        'Please ensure this is a "Detailed" CAS (not Summary) from CAMS/KFintech.');
-    }
-
     return parsed;
   }
 
-  /* ═══════════════════════════════════════════ COLLECT SCHEMES */
-  // Returns flat list of {amfiCode, name, isin} — needed for AMFI search in demat PDFs
-  function collectSchemes(portfolios) {
-    const seen = new Map(); // key → scheme ref
-    for (const p of portfolios)
-      for (const f of (p.folios || []))
-        for (const s of (f.schemes || [])) {
-          const key = s.amfiCode || s.isin || s.name;
-          if (key && !seen.has(key)) seen.set(key, s);
-        }
-    return [...seen.values()];
-  }
-
   /* ═══════════════════════════════════════════════ FULL REFRESH */
-  async function refreshDashboard() {
-    const portfolios = state.portfolios;
-    if (portfolios.length === 0) { UI.showUpload(); return; }
+  function refreshDashboard() {
+    try {
+      const hasData = state.portfolios.length > 0;
+      UI.updateMFViewState(hasData);
+      
+      if (hasData) {
+        // 1. Filter by person
+        const filtered = state.activePerson 
+          ? state.portfolios.filter(p => (p.investor?.name || 'Unknown') === state.activePerson)
+          : state.portfolios;
 
-    // Compute analytics (uses already-fetched live NAV map)
-    UI.setLoading('Computing analytics…', 'Calculating XIRR for each fund', 80);
+        // 2. Compute Summary & Rows
+        const summary = Analytics.computePortfolioSummary(filtered, state.liveNavMap);
+        const rows    = UI.buildRows(filtered);
 
-    const summary = Analytics.computePortfolioSummary(portfolios, state.liveNavMap);
-
-    // Filter portfolios for active person tab
-    const displayPortfolios = state.activePersonIdx === -1
-      ? portfolios
-      : [portfolios[state.activePersonIdx]];
-
-    UI.showDashboard();
-    UI.renderSummaryCards(summary);
-    UI.renderPersonTabs(portfolios, state.activePersonIdx, (idx) => {
-      state.activePersonIdx = idx;
-      refreshDashboard();
-    });
-
-    // Table
-    UI.renderTable(displayPortfolios, state.activePersonIdx, (row) => {
-      UI.openTransactionPanel(row);
-    });
-    UI.initTableSort(displayPortfolios, (row) => UI.openTransactionPanel(row));
-
-    // Charts (use display portfolios)
-    const chartRows = UI.buildRows(displayPortfolios);
-    UI.renderCharts(chartRows);
-
-    // Reveal multi-person filter column
-    const pTh = document.querySelector('.th-person');
-    if (pTh) pTh.style.display = portfolios.length > 1 ? '' : 'none';
-    const pFilter = document.getElementById('table-filter-person');
-    if (pFilter) pFilter.style.display = portfolios.length > 1 ? '' : 'none';
-
-    UI.hideLoading();
+        // 3. Render
+        UI.renderSummaryCards(summary);
+        UI.renderCharts(rows);
+        UI.renderTable(filtered, (row) => UI.openTransactionPanel(row));
+        UI.renderPersonTabs(state.portfolios, state.activePerson);
+      }
+      
+      // Update Overview Screen View
+      UI.renderLandingPage(state);
+      UI.updateBackupReminder(state.isDirtySinceExport);
+      saveState();
+    } catch (err) {
+      console.error('Refresh Dashboard Error:', err);
+    }
   }
 
   /* ═══════════════════════════════════════════ HANDLE NEW FILES */
   async function handleFiles(files) {
     if (!files || files.length === 0) return;
-
     const fileArr = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf'));
-    if (fileArr.length === 0) {
-      UI.toast('warning', 'No PDFs', 'Please upload .pdf files.');
-      return;
-    }
+    if (fileArr.length === 0) { UI.toast('warning', 'No PDFs', 'Please upload .pdf files.'); return; }
 
     UI.showLoading('Loading…', 'Preparing files', 0);
-
     const newPortfolios = [];
 
     for (let i = 0; i < fileArr.length; i++) {
-      const file = fileArr[i];
-      UI.setLoading(
-        `Parsing file ${i+1} of ${fileArr.length}`,
-        file.name,
-        Math.round((i / fileArr.length) * 40)
-      );
-      const parsed = await processFile(file);
-      closePasswordModal();
-      if (parsed) newPortfolios.push(parsed);
+        const parsed = await processFile(fileArr[i]);
+        closePasswordModal();
+        if (parsed) newPortfolios.push(parsed);
     }
 
-    if (newPortfolios.length === 0) {
-      UI.hideLoading();
-      UI.toast('error', 'No Data', 'No portfolios could be loaded.');
-      return;
-    }
+    if (newPortfolios.length === 0) { UI.hideLoading(); return; }
 
-    // Merge into state
     state.portfolios.push(...newPortfolios);
-    UI.toast('success', 'Parsed!',
-      `${newPortfolios.length} statement${newPortfolios.length > 1 ? 's' : ''} loaded.`);
+    UI.toast('success', 'Parsed!', `${newPortfolios.length} statement(s) loaded.`);
 
-    // Fetch live NAV (also resolves AMFI codes for demat PDFs via name search)
-    const schemes = collectSchemes(state.portfolios);
-    UI.setLoading('Fetching live NAV…', `Resolving ${schemes.length} funds…`, 45);
+    // Fetch live NAV
+    const schemes = UI.buildRows(state.portfolios);
+    UI.setLoading('Fetching live NAV…', `Resolving ${schemes.length} units…`, 45);
+    state.liveNavMap = await NavFetch.fetchAll(schemes);
 
-    state.liveNavMap = await NavFetch.fetchAll(schemes, (done, total) => {
-      const pct = 45 + Math.round((done / total) * 35);
-      UI.setLoading(null, `NAV ${done}/${total}`, pct);
-    });
-
-    const navCount = Object.keys(state.liveNavMap).length;
-    UI.toast('info', 'Live NAV Ready', `Fetched live prices for ${navCount} of ${schemes.length} funds.`);
-
-    await refreshDashboard();
+    UI.hideLoading();
+    state.isDirtySinceExport = true;
+    refreshDashboard();
+    UI.setScreen('mf'); // Switch to MF dashboard after upload
   }
 
-  /* ════════════════════════════════════════════ POPULATE DEBUG */
-  function populateDebug(portfolios) {
-    const schemesEl = document.getElementById('debug-schemes');
-    const linesEl   = document.getElementById('debug-lines');
-    if (!schemesEl || !linesEl) return;
+  function setEvent(id, event, handler) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(event, handler);
+  }
 
-    let schemeTxt = '';
-    portfolios.forEach((p, pi) => {
-      schemeTxt += `=== Portfolio ${pi+1}: ${p.investor?.name || p._filename} ===\n`;
-      schemeTxt += `File type: ${p.fileType}  |  Pages: ${p._pageCount}\n`;
-      schemeTxt += `Period: ${p.statementPeriod?.from?.toLocaleDateString('en-IN')||'?'} → ${p.statementPeriod?.to?.toLocaleDateString('en-IN')||'?'}\n\n`;
-      (p.folios||[]).forEach((f, fi) => {
-        schemeTxt += `  Folio ${fi+1}: ${f.folio}  [${f.amc}]\n`;
-        (f.schemes||[]).forEach((s, si) => {
-          schemeTxt += `    Scheme ${si+1}: ${s.name}\n`;
-          schemeTxt += `      ISIN: ${s.isin||'–'}  AMFI: ${s.amfiCode||'–'}\n`;
-          schemeTxt += `      Units: ${s.closingUnits}  NAV: ${s.valuation?.nav||'–'}  Value: ${s.valuation?.value||'–'}\n`;
-          schemeTxt += `      Transactions: ${s.transactions?.length||0}\n`;
-        });
-      });
-      schemeTxt += '\n';
-    });
-    schemesEl.textContent = schemeTxt || 'No schemes detected.';
-
-    // Raw lines from last parsed portfolio
-    const last = portfolios[portfolios.length - 1];
-    if (last?._rawLines) {
-      linesEl.textContent = last._rawLines.slice(0,80).map((l,i)=>`${String(i).padStart(3)}: ${l}`).join('\n');
-    }
+  function setClick(id, handler) {
+    const el = document.getElementById(id);
+    if (el) el.onclick = handler;
   }
 
   /* ═════════════════════════════════════════════════ EVENT WIRING */
-  function init() {
-    /* ── Drop zone ────────────────────────────────────────────── */
+  function wireNavigation() {
+    // Screen Tabs in Header
+    setEvent('nav-screen-tabs', 'click', (e) => {
+      const btn = e.target.closest('.screen-tab');
+      if (!btn) return;
+      UI.setScreen(btn.dataset.screen);
+    });
+
+    // Asset Cards / Buttons that trigger screen shifts
+    document.addEventListener('click', (e) => {
+      const trigger = e.target.closest('.btn-tab-trigger, .asset-card');
+      if (trigger && trigger.dataset.target) {
+        UI.setScreen(trigger.dataset.target);
+      }
+    });
+
+    // MF Person Switching
+    setEvent('nav-person-tabs', 'click', (e) => {
+      const btn = e.target.closest('.person-tab');
+      if (!btn) return;
+      state.activePerson = btn.dataset.person;
+      refreshDashboard();
+    });
+  }
+
+  function wireActions() {
+    // MF Upload Zone
     const dropZone  = document.getElementById('drop-zone');
     const fileInput = document.getElementById('file-input');
+    if (dropZone && fileInput) {
+      dropZone.onclick = () => fileInput.click();
+    }
+    
+    setClick('browse-btn', (e) => { e.stopPropagation(); if (fileInput) fileInput.click(); });
+    setClick('nav-add-btn', () => { UI.setScreen('mf'); if (fileInput) fileInput.click(); });
 
-    dropZone.addEventListener('click', () => fileInput.click());
-    document.getElementById('browse-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      fileInput.click();
-    });
-    document.getElementById('nav-add-btn').addEventListener('click', () => fileInput.click());
+    if (fileInput) {
+      fileInput.onchange = (e) => { handleFiles(e.target.files); e.target.value = ''; };
+    }
 
-    /* ── Debug toggle ──────────────────────────────────────────── */
-    document.getElementById('nav-debug-btn').addEventListener('click', () => {
+    // Debug
+    setClick('nav-debug-btn', () => {
       const ds = document.getElementById('debug-section');
-      const visible = ds.style.display !== 'none';
-      ds.style.display = visible ? 'none' : '';
-      populateDebug(state.portfolios);
+      if (ds) ds.style.display = ds.style.display === 'none' ? 'block' : 'none';
+      // UI.populateDebug(state.portfolios); // If implemented
     });
 
-    fileInput.addEventListener('change', (e) => {
-      handleFiles(e.target.files);
-      fileInput.value = ''; // reset so same file can be re-uploaded
-    });
-
-    // Drag-and-drop
-    dropZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropZone.classList.add('drag-over');
-    });
-    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-    dropZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropZone.classList.remove('drag-over');
-      handleFiles(e.dataTransfer.files);
-    });
-
-    // Keyboard enter on drop zone
-    dropZone.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
-    });
-
-    /* ── Password modal ───────────────────────────────────────── */
-    document.getElementById('pw-submit').addEventListener('click', () => {
-      const pw = document.getElementById('pw-input').value.trim();
-      if (_pwResolve) { _pwResolve(pw); closePasswordModal(); }
-    });
-    document.getElementById('pw-input').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') document.getElementById('pw-submit').click();
-    });
-    document.getElementById('pw-skip').addEventListener('click', () => {
-      if (_pwResolve) { _pwResolve('__SKIP__'); closePasswordModal(); }
-    });
-
-    /* ── Transaction panel close ──────────────────────────────── */
-    document.getElementById('txn-panel-close').addEventListener('click',
-      () => UI.closeTransactionPanel());
-    document.getElementById('panel-overlay').addEventListener('click',
-      () => UI.closeTransactionPanel());
-
-    /* ── Table search + filter ────────────────────────────────── */
-    ['table-search', 'table-filter-cat', 'table-filter-person'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('input', () => {
-        const displayPortfolios = state.activePersonIdx === -1
-          ? state.portfolios
-          : [state.portfolios[state.activePersonIdx]];
-        UI.renderTableBody(displayPortfolios, (row) => UI.openTransactionPanel(row));
+    // Goals
+    setClick('btn-manage-goals', () => {
+      UI.openGoalManager(() => {
+        state.isDirtySinceExport = true;
+        UI.renderGoalsDashboard(state.portfolios);
+        refreshDashboard();
       });
     });
 
-    /* ── Keyboard shortcuts ───────────────────────────────────── */
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        UI.closeTransactionPanel();
-        closePasswordModal();
-      }
+    // Import/Export
+    setClick('nav-export-btn', () => {
+      UI.exportFullBackup(state);
+      state.isDirtySinceExport = false;
+      UI.updateBackupReminder(false);
+    });
+    
+    setClick('nav-import-btn', () => {
+      const impInput = document.getElementById('nav-import-input');
+      if (impInput) impInput.click();
     });
 
-    /* ── Focus search with Ctrl+K or / ───────────────────────── */
-    document.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey && e.key === 'k') || e.key === '/') {
-        const searchEl = document.getElementById('table-search');
-        if (searchEl && document.getElementById('dashboard-screen').style.display !== 'none') {
-          e.preventDefault();
-          searchEl.focus();
-          searchEl.select();
-        }
+    const navImpInput = document.getElementById('nav-import-input');
+    if (navImpInput) {
+      navImpInput.onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => UI.importFullData(ev.target.result, () => {
+          loadState();
+          state.isDirtySinceExport = false; // Freshly imported data is not "dirty"
+          refreshDashboard();
+        });
+        reader.readAsText(file);
+        e.target.value = '';
+      };
+    }
+
+    // Password Modal
+    setClick('pw-submit', () => {
+      const pwEl = document.getElementById('pw-input');
+      const pw = pwEl ? pwEl.value.trim() : '';
+      if (_pwResolve) { _pwResolve(pw); closePasswordModal(); }
+    });
+    
+    setClick('pw-skip', () => {
+      if (_pwResolve) { _pwResolve('__SKIP__'); closePasswordModal(); }
+    });
+
+    // Transaction Panel
+    setClick('txn-panel-close', () => UI.closeTransactionPanel());
+    setClick('panel-overlay', () => UI.closeTransactionPanel());
+    
+    // Sort & Table
+    UI.initTableSort(state, (row) => UI.openTransactionPanel(row));
+  }
+
+  function init() {
+    try {
+      loadState();
+      window.appState = state; // Shared with UI
+
+      wireNavigation();
+      wireActions();
+
+      document.getElementById('nav-screen-tabs').style.display = 'flex';
+      
+      // Initial routing
+      UI.setScreen('overview');
+      refreshDashboard();
+
+      // Auto NAV refresh
+      if (state.portfolios.length > 0) {
+        NavFetch.fetchAll(UI.buildRows(state.portfolios)).then(map => {
+          state.liveNavMap = map;
+          refreshDashboard();
+        }).catch(err => {
+          console.error('NAV Refresh Error:', err);
+        });
+      }
+    } catch (err) {
+      console.error('FolioSense Init Error:', err);
+      // Fallback
+      UI.setScreen('overview');
+    }
+
+    // Tab Closure Warning
+    window.addEventListener('beforeunload', (e) => {
+      if (state.isDirtySinceExport && state.portfolios.length > 0) {
+        e.preventDefault();
+        e.returnValue = ''; // Required for Chrome
       }
     });
   }
 
-  /* ═════════════════════════════════════════════════════ BOOT */
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+  } else { init(); }
 
-  // Expose for debugging
   global._FolioSense = state;
-
 })(window);

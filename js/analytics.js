@@ -10,7 +10,18 @@
     if (!cashflows || cashflows.length < 2) return null;
 
     // Sort by date ascending
-    const flows = [...cashflows].sort((a, b) => a.date - b.date);
+    const flows = [...cashflows].sort((a, b) => {
+      // Defensive: ensure we have Date objects
+      const da = (a.date instanceof Date) ? a.date : new Date(a.date);
+      const db = (b.date instanceof Date) ? b.date : new Date(b.date);
+      return da - db;
+    });
+
+    if (!(flows[0].date instanceof Date) || isNaN(flows[0].date.getTime())) {
+      console.warn('[Analytics] xirr: Invalid first date');
+      return null;
+    }
+
     const t0 = flows[0].date.getTime();
     const MS_PER_YEAR = 365.25 * 24 * 3600 * 1000;
 
@@ -167,5 +178,75 @@
     };
   }
 
-  global.Analytics = { xirr, classifyTxn, inferCategory, computeSchemeAnalytics, computePortfolioSummary };
+  /* ── Infer active SIP from transaction history ─────────────────── */
+  /**
+   * Returns the estimated active monthly SIP amount for a scheme.
+   * Strategy: look at PURCHASE_SIP transactions from the last 12 months,
+   * round each amount to nearest 100 to group near-identical installments,
+   * pick the amount that appears most frequently (mode).
+   * Returns 0 if no recurring PURCHASE_SIP is found.
+   */
+  function computeActiveSIP(transactions) {
+    if (!transactions || transactions.length === 0) return 0;
+
+    const twelveMonthsAgo = new Date();
+    twelveMonthsAgo.setFullYear(twelveMonthsAgo.getFullYear() - 1);
+
+    const recentSIPs = transactions.filter(t => {
+      const type = t.type || classifyTxn(t.description);
+      if (type !== 'PURCHASE_SIP') return false;
+      const d = t.date instanceof Date ? t.date : new Date(t.date);
+      return d >= twelveMonthsAgo && Math.abs(t.rawAmount || 0) > 0;
+    });
+
+    if (recentSIPs.length === 0) return 0;
+
+    // Group by amount rounded to nearest ₹100
+    const freq = {};
+    recentSIPs.forEach(t => {
+      const bucket = Math.round(Math.abs(t.rawAmount) / 100) * 100;
+      freq[bucket] = (freq[bucket] || 0) + 1;
+    });
+
+    // Return the most frequent bucket (mode)
+    const mode = Object.entries(freq).sort((a, b) => b[1] - a[1])[0];
+    return mode ? Number(mode[0]) : 0;
+  }
+
+  /* ── Goal Planning Utilities ──────────────────────────────────── */
+  function computeFutureValue(pv, annualRate, years) {
+    return pv * Math.pow(1 + annualRate, years);
+  }
+
+  /**
+   * Calculates required monthly SIP to reach a future target
+   * @param {number} targetFV - Inflation adjusted target
+   * @param {number} currentPV - Current invested value
+   * @param {number} annualRate - Expected annual return (e.g. 0.12)
+   * @param {number} years - Years remaining
+   */
+  function computeMonthlySIP(targetFV, currentPV, annualRate, years) {
+    if (years <= 0) return 0;
+    const r = annualRate / 12;
+    const n = years * 12;
+    
+    // Future value of current investment
+    const fvOfPV = pvFV(currentPV, r, n);
+    const gap = targetFV - fvOfPV;
+    
+    if (gap <= 0) return 0;
+    
+    // SIP = Gap * r / ((1+r)^n - 1)
+    return (gap * r) / (Math.pow(1 + r, n) - 1);
+  }
+
+  // Helper for periodic FV
+  function pvFV(pv, rate, periods) {
+    return pv * Math.pow(1 + rate, periods);
+  }
+
+  global.Analytics = { 
+    xirr, classifyTxn, inferCategory, computeSchemeAnalytics, computePortfolioSummary,
+    computeFutureValue, computeMonthlySIP, computeActiveSIP
+  };
 })(window);
