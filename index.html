@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FolioSense — Mutual Fund Portfolio Analyzer</title>
+  <meta name="description" content="Upload your CAS statement and get instant mutual fund portfolio insights — XIRR, live NAV, holdings breakdown, and more. 100% private, runs in your browser." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════════════════ NAV BAR -->
+  <nav id="main-nav">
+    <div class="nav-brand">
+      <svg class="brand-logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="32" height="32" rx="8" fill="url(#grad)"/>
+        <path d="M7 22 L13 13 L18 18 L22 10 L26 15" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="26" cy="15" r="2" fill="white"/>
+        <defs><linearGradient id="grad" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#10b981"/><stop offset="1" stop-color="#0ea5e9"/></linearGradient></defs>
+      </svg>
+      <span class="brand-name">FolioSense</span>
+    </div>
+    <div class="nav-center" id="nav-person-tabs" style="display:none"></div>
+    <div class="nav-actions">
+      <button id="nav-add-btn" class="btn btn-ghost" style="display:none">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        Add Statement
+      </button>
+      <button id="nav-debug-btn" class="btn btn-ghost" style="display:none;font-size:12px">
+        🔍 Debug
+      </button>
+      <div id="nav-status" class="nav-status" style="display:none"></div>
+    </div>
+  </nav>
+
+  <!-- ══════════════════════════════════════════════════ UPLOAD SCREEN -->
+  <section id="upload-screen" class="screen active">
+    <div class="upload-bg-grid"></div>
+    <div class="upload-hero">
+      <div class="upload-badge">
+        <span class="badge-dot"></span>
+        100% Private — Runs entirely in your browser
+      </div>
+      <h1 class="hero-title">
+        Your Mutual Fund Portfolio,<br/>
+        <span class="hero-gradient">Fully Analyzed</span>
+      </h1>
+      <p class="hero-subtitle">Upload your CAS statement from CAMS / KFintech and get instant insights — XIRR, live NAV, gain/loss, holdings breakdown and more.</p>
+
+      <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Upload CAS PDF">
+        <input type="file" id="file-input" accept=".pdf" multiple hidden />
+        <div class="drop-icon">
+          <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="8" y="12" width="40" height="48" rx="4" fill="rgba(16,185,129,0.1)" stroke="rgba(16,185,129,0.4)" stroke-width="1.5"/>
+            <path d="M20 32 h16 M28 24 v16" stroke="#10b981" stroke-width="2" stroke-linecap="round"/>
+            <path d="M44 4 h8 a4 4 0 0 1 4 4 v12" stroke="rgba(16,185,129,0.6)" stroke-width="1.5" stroke-linecap="round"/>
+            <text x="14" y="52" font-family="Inter" font-size="7" fill="rgba(16,185,129,0.7)" font-weight="600">PDF</text>
+          </svg>
+        </div>
+        <div class="drop-text">
+          <span class="drop-primary">Drop your CAS PDF here</span>
+          <span class="drop-secondary">or click to browse — multiple files & persons supported</span>
+        </div>
+        <button class="btn btn-primary btn-upload" id="browse-btn">Choose Files</button>
+        <div class="drop-hint">Password-protected PDFs supported &nbsp;·&nbsp; CAMS + KFintech format</div>
+      </div>
+
+      <div class="feature-pills">
+        <span class="pill"><span class="pill-icon">📊</span>XIRR per fund</span>
+        <span class="pill"><span class="pill-icon">📡</span>Live NAV</span>
+        <span class="pill"><span class="pill-icon">👥</span>Multi-person</span>
+        <span class="pill"><span class="pill-icon">🔒</span>100% offline</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════ DASHBOARD SCREEN -->
+  <section id="dashboard-screen" class="screen" style="display:none">
+
+    <!-- Summary Cards -->
+    <div class="summary-row" id="summary-cards">
+      <div class="summary-card" id="sc-invested">
+        <div class="sc-label">Total Invested</div>
+        <div class="sc-value" id="sc-invested-val">₹0</div>
+        <div class="sc-sub" id="sc-invested-sub"></div>
+      </div>
+      <div class="summary-card" id="sc-current">
+        <div class="sc-label">Current Value</div>
+        <div class="sc-value" id="sc-current-val">₹0</div>
+        <div class="sc-sub" id="sc-current-sub">via live NAV</div>
+      </div>
+      <div class="summary-card gain" id="sc-gain">
+        <div class="sc-label">Total Gain / Loss</div>
+        <div class="sc-value" id="sc-gain-val">₹0</div>
+        <div class="sc-sub" id="sc-gain-pct"></div>
+      </div>
+      <div class="summary-card xirr" id="sc-xirr">
+        <div class="sc-label">Portfolio XIRR</div>
+        <div class="sc-value" id="sc-xirr-val">—</div>
+        <div class="sc-sub">Annualised return</div>
+      </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="charts-row" id="charts-row">
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <h3 class="chart-title">AMC Allocation</h3>
+          <span class="chart-subtitle">by current value</span>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-amc"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <h3 class="chart-title">Category Split</h3>
+          <span class="chart-subtitle">Equity · Debt · Hybrid</span>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-cat"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <h3 class="chart-title">Top Holdings</h3>
+          <span class="chart-subtitle">by current value</span>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-top"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Holdings Table -->
+    <div class="table-section">
+      <div class="table-header-row">
+        <h2 class="table-heading">Holdings</h2>
+        <div class="table-controls">
+          <div class="search-wrap">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input type="text" id="table-search" placeholder="Search fund or AMC…" />
+          </div>
+          <select id="table-filter-cat" class="filter-select">
+            <option value="">All Categories</option>
+            <option value="EQUITY">Equity</option>
+            <option value="DEBT">Debt</option>
+            <option value="HYBRID">Hybrid</option>
+            <option value="OTHER">Other</option>
+          </select>
+          <select id="table-filter-person" class="filter-select" style="display:none">
+            <option value="">All Persons</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="holdings-table">
+          <thead>
+            <tr>
+              <th class="sortable th-name" data-col="name">Fund Name <span class="sort-icon">↕</span></th>
+              <th class="sortable th-person" data-col="person" style="display:none">Owner <span class="sort-icon">↕</span></th>
+              <th class="sortable th-goal" data-col="goal">Goal <span class="sort-icon">↕</span></th>
+              <th class="sortable th-units" data-col="units">Units <span class="sort-icon">↕</span></th>
+              <th class="sortable th-nav" data-col="nav">NAV (CAS) <span class="sort-icon">↕</span></th>
+              <th class="sortable th-lnav" data-col="liveNav">Live NAV <span class="sort-icon">↕</span></th>
+              <th class="sortable th-invested" data-col="invested">Invested <span class="sort-icon">↕</span></th>
+              <th class="sortable th-current" data-col="current">Current Value <span class="sort-icon">↕</span></th>
+              <th class="sortable th-gain" data-col="gain">Gain / Loss <span class="sort-icon">↕</span></th>
+              <th class="sortable th-xirr" data-col="xirr">XIRR <span class="sort-icon">↕</span></th>
+            </tr>
+          </thead>
+          <tbody id="holdings-tbody"></tbody>
+        </table>
+      </div>
+      <div id="table-empty" class="table-empty" style="display:none">No funds match your filter.</div>
+    </div>
+
+    <!-- Debug Panel -->
+    <div id="debug-section" style="display:none">
+      <div class="table-section" style="margin-top:0;border-radius:var(--radius)">
+        <div class="table-header-row">
+          <h2 class="table-heading" style="color:var(--gold)">🔍 Parse Diagnostics</h2>
+          <p style="font-size:13px;color:var(--text2)">Inspect what the parser extracted from your PDF. Share this with the developer if data looks wrong.</p>
+        </div>
+        <div style="padding:0 20px 20px;display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Detected Schemes</div>
+            <pre id="debug-schemes" style="background:var(--bg2);border:1px solid var(--card-border);border-radius:8px;padding:12px;font-size:11px;color:var(--text2);overflow:auto;max-height:400px;line-height:1.7"></pre>
+          </div>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">First 80 Raw Lines (from PDF)</div>
+            <pre id="debug-lines" style="background:var(--bg2);border:1px solid var(--card-border);border-radius:8px;padding:12px;font-size:11px;color:var(--text2);overflow:auto;max-height:400px;line-height:1.7"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ═══════════════════════════════════════════════ PASSWORD MODAL -->
+  <div id="password-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="pw-title">
+    <div class="modal-box">
+      <div class="modal-icon">🔒</div>
+      <h2 id="pw-title" class="modal-title">PDF Password Required</h2>
+      <p class="modal-desc" id="pw-desc">Enter the password for <strong id="pw-filename"></strong>.<br/>Usually your PAN in UPPERCASE (e.g. <code>ABCDE1234F</code>).</p>
+      <input type="password" id="pw-input" class="modal-input" placeholder="Enter PDF password" autocomplete="off" />
+      <p class="modal-error" id="pw-error" style="display:none">❌ Incorrect password. Please try again.</p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="pw-skip">Skip this file</button>
+        <button class="btn btn-primary" id="pw-submit">Unlock &amp; Parse</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════ TRANSACTION PANEL -->
+  <div id="txn-panel" class="side-panel" style="display:none">
+    <div class="panel-header">
+      <div>
+        <h3 class="panel-title" id="txn-panel-title">Transaction History</h3>
+        <span class="panel-sub" id="txn-panel-sub"></span>
+      </div>
+      <button class="panel-close" id="txn-panel-close" aria-label="Close">✕</button>
+    </div>
+    <div class="panel-stats" id="txn-panel-stats"></div>
+    <div class="panel-body">
+      <table class="txn-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Description</th>
+            <th style="text-align:right">Amount</th>
+            <th style="text-align:right">Units</th>
+            <th style="text-align:right">NAV</th>
+            <th style="text-align:right">Balance</th>
+          </tr>
+        </thead>
+        <tbody id="txn-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+  <div id="panel-overlay" class="panel-overlay" style="display:none"></div>
+
+  <!-- ══════════════════════════════════════════════ LOADING OVERLAY -->
+  <div id="loading-overlay" class="loading-overlay" style="display:none">
+    <div class="loading-box">
+      <div class="loader-ring"></div>
+      <div class="loading-title" id="loading-title">Parsing PDF…</div>
+      <div class="loading-sub" id="loading-sub">Reading transaction history</div>
+      <div class="loading-progress-bar"><div class="loading-progress-fill" id="loading-progress-fill"></div></div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════ TOAST -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Scripts (order matters) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="js/analytics.js"></script>
+  <script src="js/navfetch.js"></script>
+  <script src="js/parser.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/app.js"></script>
+
+</body>
+</html>

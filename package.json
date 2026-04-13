@@ -1,0 +1,11 @@
+{
+  "name": "mutual-fund-portfolio-analyzer",
+  "version": "1.0.0",
+  "description": "Client-side CAS PDF portfolio analyzer with XIRR and live NAV",
+  "scripts": {
+    "start": "npx serve . -p 3000",
+    "dev": "npx serve . -p 3000"
+  },
+  "keywords": ["mutual-fund", "portfolio", "CAS", "XIRR", "NAV"],
+  "license": "MIT"
+}
