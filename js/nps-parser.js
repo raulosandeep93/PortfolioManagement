@@ -1,6 +1,6 @@
 /**
- * nps-parser.js — Protean CRA / NPS Holdings Statement PDF parser
- * Handles both "Statement of Holdings" and "Statement of Transaction" formats.
+ * nps-parser.js — Protean CRA / NPS Holdings Statement PDF parser (v2)
+ * Multi-strategy parser: structured → asset-class scanner → numeric fallback.
  * Exposes: window.NPSParser
  */
 (function (global) {
@@ -17,11 +17,14 @@
     january:0,february:1,march:2,april:3,june:5,july:6,august:7,
     september:8,october:9,november:10,december:11,
   };
+
   function parseDate(s) {
     if (!s) return null;
     s = s.trim().replace(/[\u2013\u2014]/g, '-');
     let m = s.match(/^(\d{1,2})[-\/ ](\w{3,9})[-\/ ](\d{4})$/i);
     if (m) { const mo = MONTH[m[2].toLowerCase()]; if (mo !== undefined) return new Date(+m[3], mo, +m[1]); }
+    m = s.match(/^(\w{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?,\s+(\d{4})$/i);
+    if (m) { const mo = MONTH[m[1].toLowerCase()]; if (mo !== undefined) return new Date(+m[3], mo, +m[2]); }
     m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
     if (m) return new Date(+m[3], +m[2]-1, +m[1]);
     m = s.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})$/);
@@ -44,27 +47,26 @@
   /* ═══════════════════════════════════════════ ASSET CLASS */
   function inferAssetClass(name) {
     const n = (name || '').toUpperCase();
+    if (/\bA\b|ALT|ALTERNATIVE/.test(n)) return 'A';
     if (/\bC\b|CORP|CORPORATE|BOND/.test(n)) return 'C';
     if (/\bG\b|GOVT|GOVERNMENT|GILT/.test(n)) return 'G';
-    if (/\bA\b|ALT|ALTERNATIVE/.test(n)) return 'A';
     return 'E'; // Default equity
   }
 
-  function assetClassName(code) {
-    const map = { E: 'Equity', C: 'Corporate Bonds', G: 'Govt. Securities', A: 'Alternative Assets' };
-    return map[code] || code;
-  }
+  const ASSET_NAMES = { E: 'Equity', C: 'Corporate Bonds', G: 'Govt. Securities', A: 'Alternative Assets' };
+
+  function assetClassName(code) { return ASSET_NAMES[code] || code; }
 
   /* ══════════════════════════════════════ CLASSIFY NPS TXN */
   function classifyNPSTxn(desc) {
     const d = (desc || '').toUpperCase();
-    if (/EMPLOYER|EMP\s*CONTR|EMPLOYER\s*CONTR/.test(d))        return 'EMPLOYER_CONTRIBUTION';
-    if (/EMPLOYEE|EMP\s*C|EMPLOYEE\s*CONTR/.test(d))             return 'EMPLOYEE_CONTRIBUTION';
-    if (/SELF|VOLUNTARY|VOL\s*CONTR/.test(d))                    return 'VOLUNTARY_CONTRIBUTION';
-    if (/CONTR(?:IBUTION)?/.test(d))                             return 'CONTRIBUTION';
-    if (/WITHDRAW|REDEMP|EXIT/.test(d))                          return 'WITHDRAWAL';
-    if (/SWITCH|REBALANCE/.test(d))                              return 'SWITCH';
-    if (/CHARGES?|FEE|ADMIN/.test(d))                            return 'CHARGES';
+    if (/EMPLOYER|EMP\s*CONTR|EMPLOYER\s*CONTR/.test(d))  return 'EMPLOYER_CONTRIBUTION';
+    if (/EMPLOYEE|EMP\s*C|EMPLOYEE\s*CONTR/.test(d))       return 'EMPLOYEE_CONTRIBUTION';
+    if (/SELF|VOLUNTARY|VOL\s*CONTR|REGULAR\s*CONTR|BY\s*SUBS/.test(d)) return 'VOLUNTARY_CONTRIBUTION';
+    if (/CONTR(?:IBUTION)?|DEPOSIT|SUBSCRIPTION/i.test(d)) return 'CONTRIBUTION';
+    if (/WITHDRAW|REDEMP|EXIT/.test(d))                    return 'WITHDRAWAL';
+    if (/SWITCH|REBALANCE/.test(d))                        return 'SWITCH';
+    if (/CHARGES?|FEE|ADMIN/.test(d))                      return 'CHARGES';
     return 'OTHER';
   }
 
@@ -100,29 +102,72 @@
     return lines.filter(l => l.text.length > 0);
   }
 
-  /* ══════════════════════════════════════════════ MAIN PARSER */
-  function parseLines(lines) {
-    const log = (...a) => console.log('[NPSParser]', ...a);
+  /* ══════════════════════════════════ BUILD EMPTY RESULT */
+  function emptyResult() {
+    return { type: 'NPS', investor: {}, pfm: '', tiers: [], _summary: {} };
+  }
 
-    const result = {
-      type:     'NPS',
-      investor: {},
-      pfm:      '',
-      tiers:    [], // [{tier:'Tier I', schemes:[...]}]
-      _summary: {}  // raw totals from statement if found
-    };
+  function getOrCreateTier(result, label) {
+    let t = result.tiers.find(x => x.tier === label);
+    if (!t) { t = { tier: label, schemes: [] }; result.tiers.push(t); }
+    return t;
+  }
+
+  function getOrCreateScheme(tier, assetClass) {
+    let s = tier.schemes.find(x => x.assetClass === assetClass);
+    if (!s) {
+      s = { name: `NPS - ${assetClassName(assetClass)}`, assetClass, units: 0, nav: 0, currentValue: 0, totalContributions: 0, transactions: [], analytics: null };
+      tier.schemes.push(s);
+    }
+    return s;
+  }
+
+  /* ═══════════════════════════════════════════ EXTRACT COMMON META */
+  function extractMeta(lines, result) {
+    for (const line of lines) {
+      const tl = line.text;
+      if (!result.investor.name) {
+        const nm = tl.match(/(?:Subscriber\s*|Account\s*Holder\s*)?Name\s*[:\-]\s*(.+)/i);
+        if (nm) result.investor.name = nm[1].trim();
+      }
+      if (!result.investor.pran) {
+        const pm = tl.match(/PRAN\s*[:\-]?\s*(\d{10,12})/i);
+        if (pm) result.investor.pran = pm[1];
+      }
+      if (!result.pfm) {
+        const pfm = tl.match(/(?:Pension\s+Fund\s+Manager|PFM)\s*[:\-]\s*(.+)/i)
+                 || tl.match(/((?:SBI|HDFC|ICICI|UTI|KOTAK|LIC|Aditya\s+Birla|Tata|DSP|Max|Principal|Birla|Bajaj|CAMS)\s*(?:Pension|NPS|Fund)[^\n]{0,50})/i);
+        if (pfm) result.pfm = (pfm[1] || pfm[0]).trim();
+      }
+      // Global contribution discovery
+      const invM = tl.match(/(?:Total\s+)?(?:Contribution|Invested|Cost)\s*(?:Amount)?\s*[:\-]?\s*(?:INR|Rs\.?|₹)?\s*([\d,]+\.?\d*)/i);
+      if (invM && !result._summary.totalInvested) {
+        result._summary.totalInvested = cleanNum(invM[1]);
+      }
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+   * STRATEGY 1 — Structured header-driven parsing
+   * Works when PDF has clear "Tier I / Tier II" and table headers.
+   * ════════════════════════════════════════════════════════════════════*/
+  function parseStructured(lines) {
+    const log = (...a) => console.log('[NPSParser-S1]', ...a);
+    const result = emptyResult();
+    extractMeta(lines, result);
 
     let currentTier   = null;
     let currentScheme = null;
-    let inTxnTable    = false;
     let inHoldingsTable = false;
+    let inTxnTable      = false;
+    let pendingName     = '';
 
-    // Print first 80 lines for debug
-    log('First 80 lines:\n' + lines.slice(0, 80).map((l, i) => `${i}: ${l.text}`).join('\n'));
+    log('First 80 lines:\n' + lines.slice(0, 80).map((l,i) => `${i}: ${l.text}`).join('\n'));
 
-    const saveTier = () => {
+    const saveCurrent = () => {
       if (currentTier && currentScheme) {
-        currentTier.schemes.push(currentScheme);
+        if (!currentTier.schemes.find(s => s.assetClass === currentScheme.assetClass))
+          currentTier.schemes.push(currentScheme);
         currentScheme = null;
       }
     };
@@ -131,202 +176,338 @@
       const tl = lines[i].text.trim();
       if (!tl) continue;
 
-      // ── Subscriber Name ──────────────────────────────────
-      if (!result.investor.name) {
-        const nm = tl.match(/(?:Subscriber\s*)?Name\s*[:\-]\s*(.+)/i);
-        if (nm) { result.investor.name = nm[1].trim(); log('Name:', result.investor.name); continue; }
-      }
-
-      // ── PRAN ─────────────────────────────────────────────
-      if (!result.investor.pran) {
-        const pm = tl.match(/PRAN\s*[:\-]?\s*(\d{10,12})/i);
-        if (pm) { result.investor.pran = pm[1]; log('PRAN:', result.investor.pran); continue; }
-      }
-
-      // ── PFM / Fund Manager ────────────────────────────────
-      if (!result.pfm) {
-        const pfm = tl.match(/(?:Pension\s+Fund\s+Manager|PFM)\s*[:\-]\s*(.+)/i)
-                 || tl.match(/((?:SBI|HDFC|ICICI|UTI|KOTAK|LIC|Aditya\s+Birla|Tata|DSP\s+BlackRock|Max|Principal|Birla)\s*(?:Pension|NPS|Fund)[^\n]{0,40})/i);
-        if (pfm) { result.pfm = (pfm[1] || pfm[0]).trim(); log('PFM:', result.pfm); }
-      }
-
-      // ── Tier section header ───────────────────────────────
+      // ── Tier header ───────────────────────────────────────
       const tierM = tl.match(/Tier\s*[-\s]?\s*(I{1,2}|1|2)\b/i);
       if (tierM) {
-        saveTier();
-        const tierNum = tierM[1].replace(/1/,'I').replace(/2/,'II').replace(/i{2}/i,'II').replace(/i{1}$/i,'I').toUpperCase();
-        const tierLabel = `Tier ${tierNum}`;
-        // reuse or create
-        let existing = result.tiers.find(t => t.tier === tierLabel);
-        if (!existing) {
-          existing = { tier: tierLabel, schemes: [] };
-          result.tiers.push(existing);
-        }
-        currentTier = existing;
+        saveCurrent();
+        const raw = tierM[1].replace(/1/, 'I').replace(/2/, 'II').toUpperCase();
+        const tierLabel = `Tier ${raw === 'II' || raw === '2' ? 'II' : 'I'}`;
+        currentTier = getOrCreateTier(result, tierLabel);
         inHoldingsTable = /holding|balance|unit|portfolio/i.test(tl);
-        inTxnTable = /transaction|statement/i.test(tl);
-        log('Tier:', tierLabel, '| holdingTable:', inHoldingsTable, '| txnTable:', inTxnTable);
+        inTxnTable      = /transaction|statement/i.test(tl);
+        pendingName     = '';
+        log('Tier:', tierLabel);
         continue;
       }
 
-      // ── Holdings table header (triggers scheme reading) ───
-      if (/Scheme\s*Name.*Unit|Asset\s*Class.*NAV|Fund\s*Name.*Balance/i.test(tl)) {
-        inHoldingsTable = true;
-        inTxnTable = false;
-        log('Holdings table header at line', i);
+      // ── Holdings table trigger ────────────────────────────
+      if (/Scheme\s*Name.*(?:Unit|NAV|Value)|Asset\s*Class.*(?:NAV|Unit)|Fund\s*Name.*(?:Balance|Unit|Value)|Account\s*Summary\s*For\s*Current|Holding\s*.*?Details|Units?\s*held|Total\s*Units?\s*held/i.test(tl)) {
+        inHoldingsTable = true; inTxnTable = false; pendingName = '';
+        if (!currentTier) currentTier = getOrCreateTier(result, 'Tier I');
+        log('Holdings table at line', i);
         continue;
       }
 
-      // ── Transaction table header ──────────────────────────
-      if (/\bDate\b.*(?:Transaction|Contribut|Description)/i.test(tl) && currentTier) {
-        inTxnTable = true;
-        inHoldingsTable = false;
-        log('Txn table start at line', i);
+      // ── Transaction table trigger ─────────────────────────
+      if (/\bDate\b.*(?:Transaction|Contribut|Description|Particulars|Narration)/i.test(tl) || /Transaction\s*Details/i.test(tl)) {
+        inTxnTable = true; inHoldingsTable = false;
+        if (!currentTier) currentTier = getOrCreateTier(result, 'Tier I');
+        log('Txn table at line', i);
         continue;
       }
 
       // ── Holdings row parsing ──────────────────────────────
-      // Typical: "Scheme E - SBI Pension  1234.567  48.2300  59,543.23  48,000.00"
-      // or:      "E - Equity   1234.5678  48.23  59543.23"
       if (inHoldingsTable && currentTier) {
-        // Try to detect scheme row: name token + 2-5 numeric columns
         const parts = tl.split(/\s{2,}|\t/).map(s => s.trim()).filter(Boolean);
-        const nums = parts.filter(p => isNumTok(p) && p !== '-').map(cleanNum);
+        const nums  = parts.filter(p => isNumTok(p) && p !== '-').map(cleanNum);
         const label = parts.filter(p => !isNumTok(p)).join(' ');
 
-        if (nums.length >= 2 && label.length > 1 && !/total|grand|sub\s*total/i.test(label)) {
-          // Determine asset class
-          const assetClass = inferAssetClass(label);
-          const schemeName = `NPS - ${assetClassName(assetClass)}`;
-
-          // Column order: Units, NAV, Market Value (Current), [Purchase Cost]
-          const units   = nums[0] || 0;
-          const nav     = nums[1] || 0;
-          const current = nums[2] || (units * nav);
-          const cost    = nums[3] || 0;
-
-          log(`Holdings row: ${label} | AC:${assetClass} | Units:${units} | NAV:${nav} | CurrentVal:${current} | Cost:${cost}`);
-
-          // Check if scheme already started (switch from txn-parsing back to holdings)
-          if (currentScheme && currentScheme.assetClass !== assetClass) saveTier();
-
-          if (!currentScheme) {
-            currentScheme = {
-              name: schemeName,
-              assetClass,
-              units,
-              nav,
-              currentValue: current || units * nav,
-              totalContributions: cost,
-              transactions: [],
-              analytics: null,
-            };
-          } else {
-            // update values if already exists (holdings line may appear before txn)
-            currentScheme.units = units;
-            currentScheme.nav   = nav;
-            currentScheme.currentValue = current || units * nav;
-            if (cost) currentScheme.totalContributions = cost;
-          }
+        // Pure name line (no numbers)
+        if (nums.length === 0 && label.length > 3 && !/total|grand|amount|nav|units|value|summary|account|blocked|free|scheme\s*name|asset\s*class/i.test(label)) {
+          pendingName = pendingName ? pendingName + ' ' + label : label;
           continue;
         }
 
-        // Blank/separator — end holdings mode if we see totals
-        if (/total|grand|sub\s*total/i.test(tl)) {
-          inHoldingsTable = false;
-          saveTier();
+        if (nums.length >= 2 && (label.length > 1 || pendingName.length > 1) && !/total|grand|sub\s*total/i.test(label)) {
+          const schemeLabel = label.length > 1 ? (pendingName ? pendingName + ' ' + label : label) : pendingName;
+          pendingName = '';
+
+          const assetClass = inferAssetClass(schemeLabel);
+          let units = 0, nav = 0, current = 0, cost = 0;
+          if (nums.length >= 5) {
+            // Blocked | Free | Total | NAV | Market Value
+            units = nums[2]; nav = nums[3]; current = nums[4] || (units * nav);
+          } else {
+            units = nums[0]; nav = nums[1]; current = nums[2] || (units * nav); cost = nums[3] || 0;
+            if (nav > units && units > 0 && units < 500) { const tmp = units; units = nav; nav = tmp; }
+          }
+
+          log(`Holdings: ${schemeLabel} AC:${assetClass} u:${units} nav:${nav} cur:${current}`);
+
+          saveCurrent();
+          currentScheme = getOrCreateScheme(currentTier, assetClass);
+          if (units)   currentScheme.units = units;
+          if (nav)     currentScheme.nav   = nav;
+          if (current) currentScheme.currentValue = current;
+          if (cost)    currentScheme.totalContributions = cost;
+          continue;
+        }
+
+        // Total line — end holdings mode
+        if (/(?:total|grand|sub\s*total)/i.test(tl) && !/(?:total\s*units|free\s*units|blocked\s*units)/i.test(tl)) {
+          if (nums.length > 0 || /total\s*value|grand\s*total/i.test(tl)) {
+            inHoldingsTable = false; pendingName = ''; saveCurrent();
+          }
         }
       }
 
       // ── Transaction row parsing ───────────────────────────
-      // Typical: "01-Apr-2024  Employee Contribution  5000.00  103.672  48.2265  1234.5678"
       if (inTxnTable && currentTier && currentScheme) {
-        const dateM = tl.match(/^(\d{1,2}[-\/]\w{3,9}[-\/]\d{4}|\d{1,2}[-\/]\d{2}[-\/]\d{4}|\d{4}[-\/]\d{2}[-\/]\d{2})/);
+        // Support Date formats: 08-Apr-2026, 08/04/2026, 2026-04-08, Apr 08, 2026
+        const dateM = tl.match(/^(\d{1,2}[-\/]\w{3,9}[-\/]\d{4}|\w{3}\s+\d{1,2}(?:st|nd|rd|th)?,\s+\d{4}|\d{1,2}[-\/]\d{2}[-\/]\d{4}|\d{4}[-\/]\d{2}[-\/]\d{2})/i);
         if (dateM) {
           const date = parseDate(dateM[1]);
           if (date && !isNaN(date.getTime())) {
             const rest = tl.slice(dateM[0].length).trim();
             const cols = rest.split(/\s{2,}|\t/).map(s => s.trim()).filter(Boolean);
             const nums = cols.filter(c => isNumTok(c) && c !== '-').map(cleanNum);
-            const desc = cols.filter(c => !isNumTok(c)).join(' ').trim() || rest.replace(/[\d,. ]+/g, ' ').trim();
+            const desc = cols.filter(c => !isNumTok(c)).join(' ').trim();
             const type = classifyNPSTxn(desc);
 
-            // cols: [amount, units, nav, balanceUnits] or some subset
             let amount = 0, units = 0, nav = 0, balance = 0;
-            if      (nums.length >= 4) [amount, units, nav, balance] = nums.slice(-4);
-            else if (nums.length === 3) [amount, units, nav] = nums;
-            else if (nums.length === 2) [amount, units] = nums;
-            else if (nums.length === 1)  amount = nums[0];
-
-            const txn = { date, description: desc, type, rawAmount: Math.abs(amount), units: Math.abs(units), nav, balance };
-            currentScheme.transactions.push(txn);
-            // Update totalContributions if not set from holdings
-            if (!currentScheme.totalContributions && ['CONTRIBUTION','EMPLOYEE_CONTRIBUTION','EMPLOYER_CONTRIBUTION','VOLUNTARY_CONTRIBUTION'].includes(type) && amount > 0) {
-              currentScheme.totalContributions = (currentScheme.totalContributions || 0) + Math.abs(amount);
+            
+            if (nums.length >= 3) {
+              // Heuristic: NAV is usually between 5 and 600
+              // Amount is usually the largest or first/last
+              // Balance is usually the last one
+              if (nums.length >= 4) {
+                // [Amount, Units, NAV, Balance] or [Units, NAV, Amount, Balance]
+                balance = nums[nums.length - 1];
+                const others = nums.slice(0, -1);
+                // Find NAV (closest to 30-100 range)
+                let navIdx = others.findIndex(n => n > 5 && n < 600);
+                if (navIdx === -1) navIdx = others.length - 1; // Fallback to last of others
+                nav = others[navIdx];
+                const rem = others.filter((_, idx) => idx !== navIdx);
+                // Typically high value is Amount, lower is Units
+                if (rem.length >= 2) {
+                  if (rem[0] > rem[1]) { amount = rem[0]; units = rem[1]; }
+                  else { units = rem[0]; amount = rem[1]; }
+                } else if (rem.length === 1) {
+                  amount = rem[0];
+                }
+              } else {
+                // [Amount, Units, NAV]
+                let navIdx = nums.findIndex(n => n > 5 && n < 600);
+                if (navIdx === -1) navIdx = 2; // Default last
+                nav = nums[navIdx];
+                const rem = nums.filter((_, idx) => idx !== navIdx);
+                if (rem.length >= 2) {
+                  if (rem[0] > rem[1]) { amount = rem[0]; units = rem[1]; }
+                  else { units = rem[0]; amount = rem[1]; }
+                } else {
+                   amount = rem[0] || 0;
+                }
+              }
+            } else if (nums.length === 2) {
+              // Might be Amount and Units, or Units and NAV
+              if (nums[0] < 600 && nums[0] > 5) { nav = nums[0]; units = nums[1]; }
+              else if (nums[1] < 600 && nums[1] > 5) { nav = nums[1]; units = nums[0]; }
+              else { amount = nums[0]; units = nums[1]; }
+            } else if (nums.length === 1) {
+              amount = nums[0];
             }
-            log(`  TXN: ${date.toDateString()} | ${type} | amt:${amount} | units:${units} | nav:${nav}`);
+
+            currentScheme.transactions.push({ 
+              date, 
+              description: desc, 
+              type, 
+              rawAmount: Math.abs(amount), 
+              units: Math.abs(units), 
+              nav, 
+              balance 
+            });
             continue;
           }
         }
 
-        // Asset class switch in transaction section (e.g. "Asset Class E", "Scheme C")
+        // Asset class switch in txn section
         const acSwitch = tl.match(/(?:Asset\s+Class|Scheme|Fund)\s*[-:]?\s*([ECGA])\b/i);
         if (acSwitch) {
-          saveTier();
-          const assetClass = acSwitch[1].toUpperCase();
-          const existing = currentTier.schemes.find(s => s.assetClass === assetClass);
-          if (existing) currentScheme = existing;
-          else {
-            currentScheme = {
-              name: `NPS - ${assetClassName(assetClass)}`,
-              assetClass, units: 0, nav: 0, currentValue: 0, totalContributions: 0,
-              transactions: [], analytics: null,
-            };
-          }
-          log('Switched asset class to:', assetClass);
+          saveCurrent();
+          currentScheme = getOrCreateScheme(currentTier, acSwitch[1].toUpperCase());
+          log('AC switch to:', acSwitch[1]);
           continue;
         }
       }
 
-      // ── Total/summary lines ───────────────────────────────
+      // ── Total corpus / contribution summary ───────────────────────────────
       const totM = tl.match(/(?:Total\s+)?(?:Corpus|Portfolio\s+Value|Net\s+Asset|Total\s+Value|Grand\s+Total)\s*[:\-]?\s*(?:INR|Rs\.?|₹)?\s*([\d,]+\.?\d*)/i);
-      if (totM) {
-        result._summary.totalValue = cleanNum(totM[1]);
-        log('Total portfolio value from statement:', result._summary.totalValue);
-        saveTier();
-      }
+      if (totM) { result._summary.totalValue = cleanNum(totM[1]); saveCurrent(); }
+      
+      const invM = tl.match(/(?:Total\s+)?(?:Contribution|Invested|Cost)\s*(?:Amount)?\s*[:\-]?\s*(?:INR|Rs\.?|₹)?\s*([\d,]+\.?\d*)/i);
+      if (invM) { result._summary.totalInvested = cleanNum(invM[1]); }
     }
 
-    // Save any remaining
-    saveTier();
-
-    // Compute analytics for each scheme
-    result.tiers.forEach(tier => {
-      tier.schemes.forEach(scheme => {
-        scheme.analytics = computeNPSSchemeAnalytics(scheme);
-      });
-    });
-
-    log('Parsed result — Tiers:', result.tiers.length, '| Schemes:', result.tiers.reduce((s, t) => s + t.schemes.length, 0));
-    log('Full result:', JSON.stringify(result, null, 2));
+    saveCurrent();
     return result;
   }
 
-  /* ════════════════════════════════ PER-SCHEME ANALYTICS */
+  /* ══════════════════════════════════════════════════════════════════════
+   * STRATEGY 2 — Asset-class row brute-force scanner
+   * Scans every line for "Asset Class [E/C/G/A]" or "Scheme [E/C/G/A]"
+   * followed by numeric columns. Doesn't need table headers to be found.
+   * ════════════════════════════════════════════════════════════════════*/
+  function parseAssetClassScan(lines) {
+    const log = (...a) => console.log('[NPSParser-S2]', ...a);
+    const result = emptyResult();
+    extractMeta(lines, result);
+
+    // Determine current tier from context
+    let currentTierLabel = 'Tier I';
+
+    // Regex patterns for asset class row detection
+    // Matches: "Asset Class E", "Asset class E (Equity)", "Scheme E", "E - Equity", "AC - E"
+    const AC_ROW = /(?:Asset\s*Class|Scheme|AC|Fund)\s*[-:–]?\s*([ECGA])\b/i;
+    // Also matches: standalone "E", "C", "G" when followed by numbers
+    const AC_STANDALONE = /^\s*([ECGA])\s*[-–]?\s*(?:\(.*?\))?\s*([\d,]+)/i;
+    // Matches Protean CRA format: "E (Equity)" at start of line
+    const AC_PARENS = /^\s*([ECGA])\s*\(\w+\)/i;
+
+    for (let i = 0; i < lines.length; i++) {
+      const tl = lines[i].text.trim();
+
+      // Track tier from context
+      const tierM = tl.match(/Tier\s*[-\s]?\s*(I{1,2}|1|2)\b/i);
+      if (tierM) {
+        const raw = tierM[1];
+        currentTierLabel = (raw === 'II' || raw === '2') ? 'Tier II' : 'Tier I';
+      }
+
+      // Test for asset-class row
+      let assetClass = null;
+      const acM = tl.match(AC_ROW) || tl.match(AC_PARENS);
+      if (acM) assetClass = acM[1].toUpperCase();
+
+      if (!assetClass) {
+        const sa = tl.match(AC_STANDALONE);
+        if (sa) assetClass = sa[1].toUpperCase();
+      }
+
+      if (!assetClass) continue;
+
+      // Collect all numbers from this line (and possibly next 1-2 lines if they continue)
+      let numLine = tl;
+      // If the current line has < 2 numbers, peek at next line
+      const numsHere = tl.match(/[\d,]+\.?\d*/g) || [];
+      if (numsHere.length < 2 && i + 1 < lines.length) {
+        const nextNums = (lines[i+1].text.match(/[\d,]+\.?\d*/g) || []);
+        if (nextNums.length >= 2) { numLine = tl + '  ' + lines[i+1].text; i++; }
+      }
+
+      const allNums = (numLine.match(/[\d,]+\.?\d*/g) || []).map(s => cleanNum(s)).filter(n => n > 0);
+      if (allNums.length < 1) continue;
+
+      log(`AC row [${assetClass}] tier=${currentTierLabel}: ${allNums.join(', ')}`);
+
+      const tier   = getOrCreateTier(result, currentTierLabel);
+      const scheme = getOrCreateScheme(tier, assetClass);
+
+      // Column inference:
+      // Common NPS table: Blocked Units | Free Units | Total Units | NAV | Market Value
+      // Or simpler: Units | NAV | Market Value
+      // NAV for NPS is typically 10–100 range; market value is large
+      if (allNums.length >= 5) {
+        // 5+ columns: Blocked, Free, Total, NAV, MarketVal
+        scheme.units        = allNums[2];
+        scheme.nav          = allNums[3];
+        scheme.currentValue = allNums[4];
+      } else if (allNums.length === 4) {
+        // Could be: Blocked, Free, Total, NAV  OR  Units, NAV, MarketVal, Cost
+        // Heuristic: if[3] is small (NAV ~10-120), it's the NAV
+        if (allNums[3] < 500) {
+          scheme.units = allNums[2];
+          scheme.nav   = allNums[3];
+          scheme.currentValue = scheme.units * scheme.nav;
+        } else {
+          scheme.units        = allNums[0];
+          scheme.nav          = allNums[1];
+          scheme.currentValue = allNums[2];
+          scheme.totalContributions = allNums[3];
+        }
+      } else if (allNums.length === 3) {
+        scheme.units        = allNums[0];
+        scheme.nav          = allNums[1];
+        scheme.currentValue = allNums[2];
+      } else if (allNums.length === 2) {
+        scheme.units = allNums[0];
+        scheme.nav   = allNums[1];
+        scheme.currentValue = allNums[0] * allNums[1];
+      } else {
+        // Only 1 number — likely market value
+        scheme.currentValue = allNums[0];
+      }
+
+      // Sanity-correct if nav looks too big compared to units
+      if (scheme.nav > 50000 && scheme.units < scheme.nav) {
+        const tmp = scheme.units; scheme.units = scheme.nav; scheme.nav = tmp;
+      }
+    }
+
+    return result;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+   * STRATEGY 3 — Numeric cluster fallback
+   * Last resort: finds rows with a big cluster of numbers and a label
+   * that contains any NPS-like keyword, then attempts to assign values.
+   * ════════════════════════════════════════════════════════════════════*/
+  function parseNumericFallback(lines) {
+    const log = (...a) => console.log('[NPSParser-S3]', ...a);
+    const result = emptyResult();
+    extractMeta(lines, result);
+
+    // Whitelist keywords that strongly indicate NPS scheme rows
+    const SCHEME_KW = /equity|corporate|govt|government|gilt|alternative|asset\s*class|scheme\s*[ecga]|[ecga]\s*-\s*(equity|corp|govt|alt)/i;
+
+    let currentTierLabel = 'Tier I';
+
+    for (let i = 0; i < lines.length; i++) {
+      const tl = lines[i].text.trim();
+
+      const tierM = tl.match(/Tier\s*[-\s]?\s*(I{1,2}|1|2)\b/i);
+      if (tierM) currentTierLabel = (tierM[1] === 'II' || tierM[1] === '2') ? 'Tier II' : 'Tier I';
+
+      if (!SCHEME_KW.test(tl)) continue;
+
+      const nums = (tl.match(/[\d,]+\.?\d*/g) || []).map(s => cleanNum(s)).filter(n => n > 0);
+      if (nums.length < 2) continue;
+
+      const assetClass = inferAssetClass(tl);
+      log(`Fallback numeric row [${assetClass}]: ${tl} -> nums: ${nums.join(', ')}`);
+
+      const tier   = getOrCreateTier(result, currentTierLabel);
+      const scheme = getOrCreateScheme(tier, assetClass);
+
+      if (nums.length >= 3) {
+        scheme.units        = nums[0];
+        scheme.nav          = nums[1];
+        scheme.currentValue = nums[2];
+      } else {
+        scheme.units = nums[0];
+        scheme.nav   = nums[1];
+        scheme.currentValue = nums[0] * nums[1];
+      }
+    }
+
+    return result;
+  }
+
+  /* ══════════════════════════════════ COMPUTE ANALYTICS */
   function computeNPSSchemeAnalytics(scheme) {
     const current = scheme.currentValue || (scheme.units * scheme.nav);
     let totalInvested = scheme.totalContributions || 0;
     const cashflows = [];
 
     for (const txn of (scheme.transactions || [])) {
-      const isContrib = ['CONTRIBUTION','EMPLOYEE_CONTRIBUTION','EMPLOYER_CONTRIBUTION','VOLUNTARY_CONTRIBUTION'].includes(txn.type);
+      const isContrib  = ['CONTRIBUTION','EMPLOYEE_CONTRIBUTION','EMPLOYER_CONTRIBUTION','VOLUNTARY_CONTRIBUTION'].includes(txn.type);
       const isWithdraw = txn.type === 'WITHDRAWAL';
       const amt = Math.abs(txn.rawAmount || 0);
       if (isContrib && amt > 0) {
-        if (!totalInvested) totalInvested += amt;
+        totalInvested += amt;
         cashflows.push({ date: txn.date instanceof Date ? txn.date : new Date(txn.date), amount: -amt });
       } else if (isWithdraw && amt > 0) {
-        if (!totalInvested) totalInvested = Math.max(0, totalInvested - amt);
+        totalInvested = Math.max(0, totalInvested - amt);
         cashflows.push({ date: txn.date instanceof Date ? txn.date : new Date(txn.date), amount: amt });
       }
     }
@@ -335,16 +516,53 @@
       cashflows.push({ date: new Date(), amount: current });
     }
 
-    const gainLoss = current - totalInvested;
+    const gainLoss      = current - totalInvested;
     const absoluteReturn = totalInvested > 0 ? (gainLoss / totalInvested) * 100 : 0;
-
-    // XIRR via Analytics if available (shared helper)
     let xirrVal = null;
     if (global.Analytics?.xirr && cashflows.length >= 2) {
       xirrVal = global.Analytics.xirr(cashflows.filter(f => Math.abs(f.amount) > 0.01));
     }
-
     return { totalInvested, currentValue: current, gainLoss, absoluteReturn, xirr: xirrVal, units: scheme.units, nav: scheme.nav };
+  }
+
+  /* ══════════════════════════════ MERGE & VALIDATE RESULTS */
+  function countSchemes(r) {
+    return r.tiers.reduce((s, t) => s + t.schemes.filter(sc => sc.units > 0 || sc.currentValue > 0).length, 0);
+  }
+
+  function mergeResults(primary, secondary) {
+    // Fill missing meta from secondary
+    if (!primary.investor.name && secondary.investor.name) primary.investor.name = secondary.investor.name;
+    if (!primary.pfm && secondary.pfm) primary.pfm = secondary.pfm;
+
+    // Merge schemes: if primary already has a scheme for a given asset class + tier, skip
+    for (const st of secondary.tiers) {
+      const pt = getOrCreateTier(primary, st.tier);
+      for (const ss of st.schemes) {
+        const ps = pt.schemes.find(x => x.assetClass === ss.assetClass);
+        if (!ps) pt.schemes.push(ss);
+        else {
+          // Fill in missing values
+          if (!ps.units && ss.units)   ps.units = ss.units;
+          if (!ps.nav && ss.nav)       ps.nav   = ss.nav;
+          if (!ps.currentValue && ss.currentValue) ps.currentValue = ss.currentValue;
+        }
+      }
+    }
+    return primary;
+  }
+
+  function finalise(result) {
+    // Compute analytics
+    result.tiers.forEach(tier => {
+      tier.schemes.forEach(scheme => {
+        scheme.analytics = computeNPSSchemeAnalytics(scheme);
+      });
+    });
+
+    const schemeCount = result.tiers.reduce((s, t) => s + t.schemes.length, 0);
+    console.log('[NPSParser] Final — Tiers:', result.tiers.length, '| Schemes:', schemeCount);
+    return result;
   }
 
   /* ════════════════════════════════════ PUBLIC API */
@@ -353,11 +571,40 @@
     const pdf    = await pdfjsLib.getDocument({ data: new Uint8Array(buffer), password: password || '' }).promise;
     const lines  = await extractLines(pdf);
     console.log('[NPSParser] Lines:', lines.length, '| Pages:', pdf.numPages);
-    const data = parseLines(lines);
-    data._filename  = file.name;
-    data._parsedAt  = new Date().toISOString();
-    data._pageCount = pdf.numPages;
-    return data;
+
+    // Strategy 1: structured header-driven
+    const s1 = parseStructured(lines);
+    let best = s1;
+    console.log('[NPSParser] S1 scheme count:', countSchemes(s1));
+
+    if (countSchemes(s1) === 0) {
+      // Strategy 2: asset-class brute-force
+      const s2 = parseAssetClassScan(lines);
+      console.log('[NPSParser] S2 scheme count:', countSchemes(s2));
+      if (countSchemes(s2) > 0) best = mergeResults(s2, s1);
+    }
+
+    if (countSchemes(best) === 0) {
+      // Strategy 3: numeric keyword fallback
+      const s3 = parseNumericFallback(lines);
+      console.log('[NPSParser] S3 scheme count:', countSchemes(s3));
+      if (countSchemes(s3) > 0) best = mergeResults(s3, s1);
+    }
+
+    // If still nothing found, create a Tier I placeholder from any total value found
+    if (countSchemes(best) === 0 && best._summary?.totalValue) {
+      console.log('[NPSParser] Using total value fallback:', best._summary.totalValue);
+      const tier   = getOrCreateTier(best, 'Tier I');
+      const scheme = getOrCreateScheme(tier, 'E');
+      scheme.currentValue = best._summary.totalValue;
+    }
+
+    finalise(best);
+    best._filename  = file.name;
+    best._parsedAt  = new Date().toISOString();
+    best._pageCount = pdf.numPages;
+    best._rawLines  = lines.map(l => l.text);
+    return best;
   }
 
   global.NPSParser = { parsePDF };
