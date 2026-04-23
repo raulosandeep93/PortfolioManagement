@@ -14,9 +14,12 @@
     foreignEquities: { 
       barclays: { grants: [] } 
     },
+    nsc: [],
+    epf: [],
     liveNavMap:    {},   // amfiCode → { nav, date, schemeName }
     activePerson:  null, // null = All, otherwise name string
     goalsMetadata: {},   // goalName → { targetAmount, targetDate }
+    goals: {},           // key → goalName mapping
     isDirtySinceExport: false,
   };
 
@@ -28,7 +31,13 @@
         portfolios: state.portfolios,
         npsPortfolios: state.npsPortfolios,
         stocksPortfolios: state.stocksPortfolios,
+        savings: state.savings,
+        foreignEquities: state.foreignEquities,
+        nsc: state.nsc,
+        epf: state.epf,
         liveNavMap: state.liveNavMap,
+        goalsMetadata: state.goalsMetadata,
+        goals: state.goals,
       };
       localStorage.setItem(STORAGE_KEY_STATE, JSON.stringify(data));
       localStorage.setItem('folio_savings', JSON.stringify(state.savings));
@@ -42,24 +51,60 @@
   function loadState() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_STATE);
+      
+      const reviver = (key, value) => {
+        // Revive ISO date strings back into Date objects
+        if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
+          return new Date(value);
+        }
+        return value;
+      };
+
+      let parsed = {};
       if (saved) {
-        const parsed = JSON.parse(saved, (key, value) => {
-          // Revive ISO date strings back into Date objects
-          if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
-            return new Date(value);
-          }
-          return value;
-        });
-        state.portfolios = parsed.portfolios || [];
-        state.npsPortfolios = parsed.npsPortfolios || [];
-        state.stocksPortfolios = parsed.stocksPortfolios || [];
-        state.savings = parsed.savings || { accounts: [], fds: [], rds: [] };
-        state.foreignEquities = parsed.foreignEquities || { barclays: { grants: [] } };
-        state.nsc = parsed.nsc || [];
-        state.liveNavMap = parsed.liveNavMap || {};
-        state.goalsMetadata = parsed.goalsMetadata || {};
-        return true;
+        parsed = JSON.parse(saved, reviver);
       }
+
+      // Helper to load from main parsed or fallback to legacy key
+      const load = (key, legacyKey, defaultVal) => {
+        const isDefault = (val) => {
+          if (!val) return true;
+          if (Array.isArray(val)) return val.length === 0;
+          if (typeof val === 'object') {
+            if (Object.keys(val).length === 0) return true;
+            if (key === 'savings' && !val.accounts?.length && !val.fds?.length && !val.rds?.length) return true;
+            if (key === 'foreignEquities' && !val.barclays?.grants?.length) return true;
+          }
+          return false;
+        };
+
+        const fromMain = parsed[key];
+        if (fromMain !== undefined && !isDefault(fromMain)) return fromMain;
+
+        try {
+          const legacy = localStorage.getItem(legacyKey);
+          if (legacy) {
+            const parsedLegacy = JSON.parse(legacy, reviver);
+            if (!isDefault(parsedLegacy)) return parsedLegacy;
+          }
+        } catch(e) {}
+        
+        return fromMain || defaultVal;
+      };
+
+      state.portfolios = parsed.portfolios || [];
+      state.npsPortfolios = parsed.npsPortfolios || [];
+      state.stocksPortfolios = parsed.stocksPortfolios || [];
+      state.liveNavMap = parsed.liveNavMap || {};
+      
+      state.savings = load('savings', 'folio_savings', { accounts: [], fds: [], rds: [] });
+      state.foreignEquities = load('foreignEquities', 'folio_foreign', { barclays: { grants: [] } });
+      state.nsc = load('nsc', 'folio_nsc', []);
+      state.epf = load('epf', 'folio_epf', []);
+      state.goalsMetadata = load('goalsMetadata', 'foliosense_goals_meta', {});
+      state.goals = load('goals', 'foliosense_goals', {});
+
+      return !!saved;
     } catch (e) { console.warn('Failed to load state:', e); }
     return false;
   }
@@ -616,6 +661,13 @@
     setClick('btn-add-nsc', () => {
         const modal = document.getElementById('nsc-modal');
         if (modal) {
+            // Clear inputs
+            document.getElementById('nsc-id').value = '';
+            document.getElementById('nsc-amount').value = '';
+            document.getElementById('nsc-date').value = '';
+            document.getElementById('nsc-rate').value = '7.7';
+            document.getElementById('nsc-goal-input').value = '';
+            
             modal.style.display = 'flex';
             const dl = document.getElementById('nsc-goals-list');
             if (dl) {
@@ -669,10 +721,57 @@
         }
     });
 
+    const nscTable = document.getElementById('nsc-tbody');
+    if (nscTable) {
+        nscTable.onchange = (e) => {
+            if (e.target.classList.contains('nsc-goal-input')) {
+                const id = parseInt(e.target.dataset.id);
+                const newGoal = e.target.value.trim();
+                const cert = state.nsc.find(n => n.id === id);
+                if (cert) {
+                    cert.goal = newGoal;
+                    if (newGoal && !state.goalsMetadata[newGoal]) {
+                        state.goalsMetadata[newGoal] = { targetAmount: 0, yearsToGoal: 10, expectedReturn: 12, inflation: 7 };
+                    }
+                    saveState();
+                    refreshDashboard();
+                    UI.toast('info', 'Goal Updated', `Certificate linked to "${newGoal || 'no goal'}".`);
+                }
+            }
+        };
+    }
+
+    const epfTable = document.getElementById('epf-tbody');
+    if (epfTable) {
+        epfTable.onchange = (e) => {
+            if (e.target.classList.contains('epf-goal-input')) {
+                const id = parseInt(e.target.dataset.id);
+                const newGoal = e.target.value.trim();
+                const acct = state.epf.find(n => n.id === id);
+                if (acct) {
+                    acct.goal = newGoal;
+                    if (newGoal && !state.goalsMetadata[newGoal]) {
+                        state.goalsMetadata[newGoal] = { targetAmount: 0, yearsToGoal: 10, expectedReturn: 12, inflation: 7 };
+                    }
+                    saveState();
+                    refreshDashboard();
+                    UI.toast('info', 'Goal Updated', `EPF account linked to "${newGoal || 'no goal'}".`);
+                }
+            }
+        };
+    }
+
     // EPF Events
     setClick('btn-add-epf', () => {
         const modal = document.getElementById('epf-modal');
         if (modal) {
+            // Clear inputs
+            document.getElementById('epf-name').value = '';
+            document.getElementById('epf-employee').value = '';
+            document.getElementById('epf-employer').value = '';
+            document.getElementById('epf-monthly').value = '';
+            document.getElementById('epf-goal-input').value = '';
+
             modal.style.display = 'flex';
             const dl = document.getElementById('epf-goals-list');
             if (dl) {
@@ -691,15 +790,24 @@
         const name = document.getElementById('epf-name').value.trim() || 'EPF Account';
         const emp = parseFloat(document.getElementById('epf-employee').value) || 0;
         const mbr = parseFloat(document.getElementById('epf-employer').value) || 0;
+        const pen = parseFloat(document.getElementById('epf-pension').value) || 0;
         const mth = parseFloat(document.getElementById('epf-monthly').value) || 0;
         const goal = document.getElementById('epf-goal-input').value.trim();
 
-        if (emp < 0 || mbr < 0) {
+        if (emp < 0 || mbr < 0 || pen < 0) {
             UI.toast('error', 'Invalid Input', 'Balances cannot be negative.');
             return;
         }
 
-        const newEntry = { id: Date.now(), name, employeeShare: emp, employerShare: mbr, monthly: mth, goal };
+        const newEntry = { 
+            id: Date.now(), 
+            name, 
+            employeeShare: emp, 
+            employerShare: mbr, 
+            pensionShare: pen,
+            monthly: mth, 
+            goal 
+        };
         state.epf.push(newEntry);
 
         if (goal && !state.goalsMetadata[goal]) {
@@ -746,6 +854,13 @@
     setClick('btn-upload-barclays', () => { if (baInput) baInput.click(); });
     if (baInput) {
       baInput.onchange = (e) => { handleBarclaysFiles(e.target.files); e.target.value = ''; };
+    }
+
+    // EPF
+    const epfInput = document.getElementById('epf-file-input');
+    setClick('btn-upload-epf', () => { if (epfInput) epfInput.click(); });
+    if (epfInput) {
+      epfInput.onchange = (e) => { handleEPFFiles(e.target.files); e.target.value = ''; };
     }
 
     // Sort & Table
@@ -804,6 +919,72 @@
     };
 
     await parseWithPW();
+  }
+
+  async function handleEPFFiles(files) {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    UI.showLoading('Parsing EPF Passbook', file.name, 30);
+
+    try {
+        const result = await global.EPFParser.parsePDF(file);
+        if (!result.summary || (result.summary.employeeShare === 0 && result.summary.employerShare === 0)) {
+            UI.hideLoading();
+            UI.toast('warning', 'No Data Found', 'Could not extract balances from this EPF passbook.');
+            return;
+        }
+
+        const name = result.investor.name || 'EPF Account';
+        const estName = result.establishment.name || '';
+        const uan = result.investor.uan || '';
+        const memberId = result.investor.memberId || '';
+        
+        // De-duplication Logic
+        let existingIdx = -1;
+        if (memberId) {
+            existingIdx = state.epf.findIndex(e => e.memberId === memberId);
+        } else if (uan && estName) {
+            // Fallback: match by UAN + Establishment if no Member ID
+            existingIdx = state.epf.findIndex(e => e.uan === uan && e.establishmentName === estName);
+        } else {
+            existingIdx = state.epf.findIndex(e => e.name === name && e.establishmentName === estName);
+        }
+
+        if (existingIdx > -1) {
+            // Update existing entry
+            state.epf[existingIdx].employeeShare = result.summary.employeeShare;
+            state.epf[existingIdx].employerShare = result.summary.employerShare;
+            state.epf[existingIdx].pensionShare = result.summary.pensionShare;
+            state.epf[existingIdx].name = name;
+            state.epf[existingIdx].establishmentName = estName;
+            UI.toast('info', 'Account Updated', `Updated balances for ${name} at ${estName || 'EPF'}`);
+        } else {
+            // Add to state
+            const newEntry = {
+                id: Date.now(),
+                uan: uan,
+                memberId: memberId,
+                name: name,
+                establishmentName: estName,
+                employeeShare: result.summary.employeeShare,
+                employerShare: result.summary.employerShare,
+                pensionShare: result.summary.pensionShare,
+                monthly: 0,
+                goal: ''
+            };
+            state.epf.push(newEntry);
+            const displayTotal = result.summary.employeeShare + result.summary.employerShare + result.summary.pensionShare;
+            UI.toast('success', 'Passbook Imported', `Retrieved ${UI.fmt(displayTotal)} for MID: ${memberId || estName || 'New Account'}`);
+        }
+
+        saveState();
+        UI.hideLoading();
+        refreshDashboard();
+    } catch (e) {
+        UI.hideLoading();
+        console.error('EPF Parse Error:', e);
+        UI.toast('error', 'Parse Error', `Failed to read EPF file: ${e.message}`);
+    }
   }
 
   function cleanUpPortfolios() {

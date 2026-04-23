@@ -67,6 +67,7 @@
   let _storedGoals = null;
 
   function getGoalsMap() {
+    if (global.appState?.goals) return global.appState.goals;
     if (_storedGoals) return _storedGoals;
     try {
       _storedGoals = JSON.parse(localStorage.getItem(GOALS_STORAGE_KEY)) || {};
@@ -84,6 +85,7 @@
       map[key] = val.trim();
     }
     _storedGoals = map;
+    if (global.appState) global.appState.goals = map;
     localStorage.setItem(GOALS_STORAGE_KEY, JSON.stringify(map));
   }
 
@@ -95,6 +97,7 @@
   let _goalsMeta = null;
 
   function getGoalsMeta() {
+    if (global.appState?.goalsMetadata) return global.appState.goalsMetadata;
     if (_goalsMeta) return _goalsMeta;
     try {
       _goalsMeta = JSON.parse(localStorage.getItem(GOALS_META_KEY)) || {};
@@ -108,6 +111,7 @@
     const meta = getGoalsMeta();
     meta[goalName] = data;
     _goalsMeta = meta;
+    if (global.appState) global.appState.goalsMetadata = meta;
     localStorage.setItem(GOALS_META_KEY, JSON.stringify(meta));
   }
 
@@ -618,6 +622,8 @@
       || (state.stocksPortfolios && state.stocksPortfolios.length > 0)
       || (state.npsPortfolios && state.npsPortfolios.length > 0)
       || (state.savings && (state.savings.accounts.length > 0 || state.savings.fds.length > 0 || state.savings.rds.length > 0))
+      || (state.foreignEquities?.barclays?.grants?.length > 0)
+      || (state.epf && state.epf.length > 0)
       || (state.nsc && state.nsc.length > 0);
     updateOverviewState(hasData);
     if (!hasData) return;
@@ -672,7 +678,12 @@
             const rate = (parseFloat(item.rate) || 7.7) / 100;
             const pDate = new Date(item.date);
             const yearsHeld = (new Date() - pDate) / (1000 * 60 * 60 * 24 * 365.25);
-            nscTotal += principal * Math.pow(1 + rate, Math.max(0, yearsHeld));
+            const maturityDate = new Date(pDate);
+            maturityDate.setFullYear(maturityDate.getFullYear() + 5);
+
+            if (maturityDate > new Date()) {
+                nscTotal += principal * Math.pow(1 + rate, Math.max(0, yearsHeld));
+            }
         });
     }
 
@@ -680,7 +691,9 @@
     let epfTotal = 0;
     if (state.epf) {
         state.epf.forEach(item => {
-            epfTotal += (parseFloat(item.employeeShare) || 0) + (parseFloat(item.employerShare) || 0);
+            epfTotal += (parseFloat(item.employeeShare) || 0) + 
+                        (parseFloat(item.employerShare) || 0) + 
+                        (parseFloat(item.pensionShare) || 0);
         });
     }
 
@@ -1186,10 +1199,11 @@
 
     let totalInvested = 0;
     let totalCurrent = 0;
+    let activeCount = 0;
 
     if (tbody) {
         if (list.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:40px; color:var(--text3)">No NSC certificates added. Click "Add Certificate" to begin.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:40px; color:var(--text3)">No NSC certificates added. Click "Add Certificate" to begin.</td></tr>`;
         } else {
             tbody.innerHTML = list.map(item => {
                 const principal = parseFloat(item.amount) || 0;
@@ -1202,12 +1216,30 @@
                 // Annual compounding formula for NSC: P * (1 + r)^t
                 // Though NSC is technically semi-annual but compounding is annual for interest.
                 const val = principal * Math.pow(1 + rate, Math.max(0, yearsHeld));
+                                const isMatured = maturityDate <= new Date();
                 
-                totalInvested += principal;
-                totalCurrent += val;
+                // Auto-clear goal if matured
+                let displayGoal = item.goal || '';
+                if (isMatured && displayGoal) {
+                    item.goal = ''; // Clear in data
+                    displayGoal = '';
+                    // We don't saveState here to avoid side effects during render, 
+                    // but next save will persist this.
+                }
 
-                return `<tr>
-                    <td><div class="td-fund-name">${item.label}</div><div class="td-amc">${item.goal || 'No Goal'}</div></td>
+                if (!isMatured) {
+                    totalInvested += principal;
+                    totalCurrent += val;
+                    activeCount++;
+                }
+
+                const goalInputHtml = isMatured 
+                    ? `<span style="opacity:0.3; font-size:11px; letter-spacing:0.05em">MATURED</span>`
+                    : `<input type="text" class="nsc-goal-input goal-input" data-id="${item.id}" list="nsc-goals-list" value="${displayGoal}" placeholder="Link goal..." />`;
+
+                return `<tr style="${isMatured ? 'opacity:0.75' : ''}">
+                    <td><div class="td-fund-name">${item.label}</div></td>
+                    <td>${goalInputHtml}</td>
                     <td>${fmtDate(item.date)}</td>
                     <td>${fmtDate(maturityDate)}</td>
                     <td style="text-align:right">${fmt(principal)}</td>
@@ -1227,7 +1259,7 @@
     setT('nsc-total-invested', fmt(totalInvested));
     setT('nsc-total-current', fmt(totalCurrent));
     setT('nsc-total-gains', fmt(totalGains));
-    setT('nsc-count', `${list.length} Certificate${list.length !== 1 ? 's' : ''}`);
+    setT('nsc-count', `${activeCount} Active Certificate${activeCount !== 1 ? 's' : ''}`);
     setT('nsc-yield', `${yieldPct.toFixed(1)}% Absolute Gain`);
   }
 
@@ -1238,6 +1270,7 @@
 
     let totalEmployee = 0;
     let totalEmployer = 0;
+    let totalPension = 0;
     let totalMonthly = 0;
 
     if (tbody) {
@@ -1247,18 +1280,28 @@
             tbody.innerHTML = list.map(item => {
                 const emp = parseFloat(item.employeeShare) || 0;
                 const mbr = parseFloat(item.employerShare) || 0;
+                const pen = parseFloat(item.pensionShare) || 0;
                 const mth = parseFloat(item.monthly) || 0;
-                const total = emp + mbr;
+                const total = emp + mbr + pen;
                 
                 totalEmployee += emp;
                 totalEmployer += mbr;
+                totalPension += pen;
                 totalMonthly += mth;
 
                 return `<tr>
-                    <td><div class="td-fund-name">${item.name}</div></td>
-                    <td>${item.goal || 'No Goal'}</td>
+                    <td>
+                        <div class="td-fund-name">${item.name}</div>
+                        <div class="td-amc" style="color:var(--text3); font-size:11px">
+                            ${item.establishmentName ? `Employer: ${item.establishmentName}<br>` : ''}
+                            ${item.uan ? `UAN: ${item.uan}` : ''}
+                            ${item.memberId ? `${item.uan ? ' | ' : ''}MID: ${item.memberId}` : ''}
+                        </div>
+                    </td>
+                    <td><input type="text" class="epf-goal-input goal-input" data-id="${item.id}" list="epf-goals-list" value="${item.goal || ''}" placeholder="Link goal..." /></td>
                     <td style="text-align:right">${fmt(emp)}</td>
                     <td style="text-align:right">${fmt(mbr)}</td>
+                    <td style="text-align:right">${fmt(pen)}</td>
                     <td style="text-align:right"><strong>${fmt(total)}</strong></td>
                     <td style="text-align:right" class="positive">+${fmt(mth)}</td>
                     <td style="text-align:right">
@@ -1271,7 +1314,8 @@
 
     setT('epf-total-employee', fmt(totalEmployee));
     setT('epf-total-employer', fmt(totalEmployer));
-    setT('epf-total-current', fmt(totalEmployee + totalEmployer));
+    setT('epf-total-pension', fmt(totalPension));
+    setT('epf-total-current', fmt(totalEmployee + totalEmployer + totalPension));
     setT('epf-total-monthly', fmt(totalMonthly) + ' monthly addition');
   }
 
@@ -1408,6 +1452,7 @@
   }
 
   global.UI = {
+    fmt, fmtPct, fmtXIRR, fmtUnits, fmtNav, fmtDate,
     toast, showLoading, setLoading, hideLoading,
     renderSummaryCards, renderPersonTabs, renderCharts, renderTable, renderTableBody, initTableSort,
     openTransactionPanel, closeTransactionPanel, setScreen, updateMFViewState,
@@ -1415,6 +1460,6 @@
     updateNPSViewState, renderNPSDashboard,
     renderNSCDashboard,
     renderStocksDashboard, updateStocksViewState,
-    renderSavingsDashboard, renderForeignEquitiesDashboard, openSavingsModal, closeSavingsModal, deleteSavings, getActiveSavingsType
+    renderSavingsDashboard, renderForeignEquitiesDashboard, renderEPFDashboard, openSavingsModal, closeSavingsModal, deleteSavings, getActiveSavingsType
   };
 })(window);
