@@ -76,9 +76,33 @@
       return 'DEBT';
     if (n.match(/HYBRID|BALANCED|EQUITY\s*SAVINGS|ARBITRAGE|MULTI\s*ASSET|CONSERVATIVE|AGGRESSIVE\s*HYBRID|FLEXI\s*HYBD/))
       return 'HYBRID';
+    
+    // More granular Equity categories for smarter benchmarking
+    if (n.match(/ELSS|TAX\s*SAVER/)) return 'EQUITY_ELSS';
+    if (n.match(/SMALL\s*CAP/)) return 'EQUITY_SMALLCAP';
+    if (n.match(/MID\s*CAP/)) return 'EQUITY_MIDCAP';
+    if (n.match(/LARGE\s*CAP|BLUECHIP|TOP\s*100/)) return 'EQUITY_LARGECAP';
+    if (n.match(/FLEXI\s*CAP|MULTI\s*CAP|FOCUSED/)) return 'EQUITY_FLEXICAP';
+    
     if (n.match(/INDEX|ETF|SENSEX|NIFTY|GOLD|SILVER|INTERNATIONAL|GLOBAL|NASDAQ|S&P|FOF|FUND OF FUND/))
       return 'OTHER';
+    
     return 'EQUITY';
+  }
+
+  function getBenchmark(category) {
+    const maps = {
+      'EQUITY_LARGECAP': { name: 'Nifty 50 TRI', return: 14.2 },
+      'EQUITY_MIDCAP':   { name: 'Nifty Midcap 150 TRI', return: 18.5 },
+      'EQUITY_SMALLCAP': { name: 'Nifty Smallcap 250 TRI', return: 21.0 },
+      'EQUITY_FLEXICAP': { name: 'Nifty 500 TRI', return: 15.8 },
+      'EQUITY_ELSS':     { name: 'Nifty 500 TRI', return: 15.8 },
+      'EQUITY':          { name: 'Nifty 500 TRI', return: 15.5 },
+      'HYBRID':          { name: 'CRISIL Hybrid 35+65', return: 12.8 },
+      'DEBT':            { name: 'CRISIL Composite Bond Index', return: 7.2 },
+      'OTHER':           { name: 'Nifty 50 TRI', return: 14.2 }
+    };
+    return maps[category] || maps['EQUITY'];
   }
 
   /* ── Compute per-scheme analytics ─────────────────────────────── */
@@ -90,19 +114,40 @@
     const units      = scheme.closingUnits || 0;
     const currentValue = units * useNav;
 
-    // Net invested = Σ purchases - Σ redemptions (absolute amounts)
+    // Cost Basis (Weighted Average Cost)
     let totalInvested = 0;
+    let runningUnits  = 0;
     const cashflows   = [];
 
-    for (const txn of (scheme.transactions || [])) {
+    // Sort transactions by date to calculate cost basis sequentially
+    const sortedTxns = [...(scheme.transactions || [])].sort((a, b) => {
+      const da = (a.date instanceof Date) ? a.date : new Date(a.date);
+      const db = (b.date instanceof Date) ? b.date : new Date(b.date);
+      return da - db;
+    });
+
+    for (const txn of sortedTxns) {
       const type = txn.type || classifyTxn(txn.description);
       const amt  = Math.abs(txn.rawAmount || 0);
+      const u    = Math.abs(txn.units || 0);
 
-      if (['PURCHASE', 'PURCHASE_SIP', 'SWITCH_IN'].includes(type) && amt > 0) {
+      if (['PURCHASE', 'PURCHASE_SIP', 'SWITCH_IN', 'DIVIDEND_REINVEST'].includes(type) && amt > 0) {
         totalInvested += amt;
-        cashflows.push({ date: txn.date, amount: -amt });
-      } else if (['REDEMPTION', 'SWITCH_OUT'].includes(type) && amt > 0) {
-        totalInvested = Math.max(0, totalInvested - amt);
+        runningUnits += u;
+        // Dividend reinvestment is not a "pocket" cashflow for XIRR
+        if (type !== 'DIVIDEND_REINVEST') {
+          cashflows.push({ date: txn.date, amount: -amt });
+        }
+      } else if (['REDEMPTION', 'SWITCH_OUT'].includes(type) && u > 0) {
+        // Reduction in cost basis based on average cost
+        if (runningUnits > 0) {
+          const avgCost = totalInvested / runningUnits;
+          totalInvested = Math.max(0, totalInvested - (u * avgCost));
+          runningUnits = Math.max(0, runningUnits - u);
+        }
+        cashflows.push({ date: txn.date, amount: amt });
+      } else if (type === 'DIVIDEND' && amt > 0) {
+        // Dividend payout is a positive cashflow for XIRR
         cashflows.push({ date: txn.date, amount: amt });
       }
     }
@@ -111,6 +156,22 @@
     if (currentValue > 0 && cashflows.length > 0) {
       cashflows.push({ date: new Date(), amount: currentValue });
     }
+
+    // Calculate Holding Period (from first purchase)
+    const firstTxn = [...(scheme.transactions || [])]
+      .filter(t => ['PURCHASE', 'PURCHASE_SIP', 'SWITCH_IN'].includes(t.type || classifyTxn(t.description)))
+      .sort((a, b) => {
+        const da = (a.date instanceof Date) ? a.date : new Date(a.date);
+        const db = (b.date instanceof Date) ? b.date : new Date(b.date);
+        return da - db;
+      })[0];
+    const firstDate = (firstTxn?.date instanceof Date) ? firstTxn.date : (firstTxn?.date ? new Date(firstTxn.date) : null);
+    const holdingYears = (firstDate && !isNaN(firstDate.getTime())) ? (new Date() - firstDate) / (1000 * 3600 * 24 * 365.25) : 0;
+    
+    // Personal CAGR (Point-to-Point)
+    const personalCagr = (totalInvested > 0 && holdingYears > 0.01) 
+      ? (Math.pow(currentValue / totalInvested, 1 / holdingYears) - 1) * 100
+      : null;
 
     const gainLoss        = currentValue - totalInvested;
     const absoluteReturn  = totalInvested > 0 ? (gainLoss / totalInvested) * 100 : 0;
@@ -122,6 +183,8 @@
       gainLoss,
       absoluteReturn,
       xirr: xirrVal,
+      personalCagr,
+      holdingYears,
       units,
       casNav,
       liveNav,
@@ -141,6 +204,8 @@
     for (const portfolio of portfolios) {
       for (const folio of (portfolio.folios || [])) {
         for (const scheme of (folio.schemes || [])) {
+          if ((scheme.closingUnits || 0) <= 0.001) continue;
+          
           const liveEntry = liveNavMap?.[scheme.amfiCode];
           scheme.analytics = computeSchemeAnalytics(scheme, liveEntry);
           totalInvested    += scheme.analytics.totalInvested;
@@ -152,7 +217,7 @@
             const amt  = Math.abs(txn.rawAmount || 0);
             if (['PURCHASE', 'PURCHASE_SIP', 'SWITCH_IN'].includes(type) && amt > 0)
               allCashflows.push({ date: txn.date, amount: -amt });
-            else if (['REDEMPTION', 'SWITCH_OUT'].includes(type) && amt > 0)
+            else if (['REDEMPTION', 'SWITCH_OUT', 'DIVIDEND'].includes(type) && amt > 0)
               allCashflows.push({ date: txn.date, amount: amt });
           }
         }
@@ -246,7 +311,7 @@
   }
 
   global.Analytics = { 
-    xirr, classifyTxn, inferCategory, computeSchemeAnalytics, computePortfolioSummary,
+    xirr, classifyTxn, inferCategory, getBenchmark, computeSchemeAnalytics, computePortfolioSummary,
     computeFutureValue, computeMonthlySIP, computeActiveSIP
   };
 })(window);

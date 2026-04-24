@@ -20,6 +20,7 @@
     activePerson:  null, // null = All, otherwise name string
     goalsMetadata: {},   // goalName → { targetAmount, targetDate }
     goals: {},           // key → goalName mapping
+    fundReturnsMap: {},   // amfiCode → { oneYear, threeYear }
     isDirtySinceExport: false,
   };
 
@@ -38,6 +39,7 @@
         liveNavMap: state.liveNavMap,
         goalsMetadata: state.goalsMetadata,
         goals: state.goals,
+        fundReturnsMap: state.fundReturnsMap,
       };
       localStorage.setItem(STORAGE_KEY_STATE, JSON.stringify(data));
       localStorage.setItem('folio_savings', JSON.stringify(state.savings));
@@ -45,6 +47,7 @@
       localStorage.setItem('folio_nsc', JSON.stringify(state.nsc));
       localStorage.setItem('folio_epf', JSON.stringify(state.epf));
       localStorage.setItem('folio_goals_meta', JSON.stringify(state.goalsMetadata));
+      localStorage.setItem('folio_fund_returns', JSON.stringify(state.fundReturnsMap));
     } catch (e) { console.warn('Failed to save state:', e); }
   }
 
@@ -103,6 +106,7 @@
       state.epf = load('epf', 'folio_epf', []);
       state.goalsMetadata = load('goalsMetadata', 'foliosense_goals_meta', {});
       state.goals = load('goals', 'foliosense_goals', {});
+      state.fundReturnsMap = load('fundReturnsMap', 'folio_fund_returns', {});
 
       return !!saved;
     } catch (e) { console.warn('Failed to load state:', e); }
@@ -863,8 +867,9 @@
       epfInput.onchange = (e) => { handleEPFFiles(e.target.files); e.target.value = ''; };
     }
 
-    // Sort & Table
-    UI.initTableSort(state, (row) => UI.openTransactionPanel(row));
+    // Mutual Fund UI
+    const onMFRowClick = (row) => UI.openTransactionPanel(row);
+    UI.initMutualFundUI(state, onMFRowClick);
   }
 
   async function handleBarclaysFiles(files) {
@@ -1009,6 +1014,29 @@
 
     state.npsPortfolios = dedupe(state.npsPortfolios, p => p.investor?.pran || p.investor?.name);
     state.portfolios = dedupe(state.portfolios, p => p.investor?.pan || p.investor?.name);
+    
+    // Deep cleanup for Mutual Funds
+    state.portfolios.forEach(p => {
+      // 1. Dedupe Folios
+      p.folios = dedupe(p.folios || [], f => f.folio);
+      
+      // 2. Dedupe Schemes within each folio
+      p.folios.forEach(f => {
+        f.schemes = (f.schemes || []).reduce((acc, s) => {
+          const key = s.isin || s.name;
+          const existing = acc.find(x => (x.isin && x.isin === s.isin) || (x.name && x.name === s.name));
+          if (existing) {
+            // Pick scheme with better data
+            if (s.closingUnits > existing.closingUnits) existing.closingUnits = s.closingUnits;
+            if (s.transactions?.length > existing.transactions?.length) existing.transactions = s.transactions;
+            Object.assign(existing.valuation || {}, s.valuation || {});
+          } else {
+            acc.push(s);
+          }
+          return acc;
+        }, []);
+      });
+    });
     if (state.stocksPortfolios) {
       state.stocksPortfolios = dedupe(state.stocksPortfolios, p => p.filename || p.pan);
     }
@@ -1041,13 +1069,42 @@
       
       // Initial routing
       UI.setScreen('overview');
+      cleanUpPortfolios();
       refreshDashboard();
 
       // Auto NAV refresh
       if (state.portfolios.length > 0) {
-        NavFetch.fetchAll(UI.buildRows(state.portfolios)).then(map => {
+        const rows = UI.buildRows(state.portfolios);
+        NavFetch.fetchAll(rows).then(async map => {
           state.liveNavMap = map;
+
+          // PERSIST resolved AMFI codes back to state.portfolios
+          rows.forEach(r => {
+            if (r.amfiCode && r.personIdx != null) {
+              const portfolio = state.portfolios[r.personIdx];
+              if (portfolio) {
+                for (const f of (portfolio.folios || [])) {
+                  const scheme = f.schemes?.find(s => s.isin === r.isin || s.name === r.name);
+                  if (scheme && !scheme.amfiCode) scheme.amfiCode = r.amfiCode;
+                }
+              }
+            }
+          });
+
           refreshDashboard();
+
+          // Background fetch fund histories for Advice
+          const amfiCodes = [...new Set(rows.map(r => r.amfiCode).filter(Boolean))];
+          const CONCURRENCY = 3;
+          for (let i = 0; i < amfiCodes.length; i += CONCURRENCY) {
+            const batch = amfiCodes.slice(i, i + CONCURRENCY);
+            await Promise.allSettled(batch.map(async code => {
+              if (state.fundReturnsMap[code]) return;
+              const ret = await NavFetch.fetchReturns(code);
+              if (ret) state.fundReturnsMap[code] = ret;
+            }));
+            refreshDashboard(); // Refresh after each batch
+          }
         }).catch(err => {
           console.error('NAV Refresh Error:', err);
         });

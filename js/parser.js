@@ -158,8 +158,24 @@
 
     const saveScheme = () => {
       if (currentScheme && currentFolio) {
-        log('Save scheme:', currentScheme.name, '| txns:', currentScheme.transactions.length, '| units:', currentScheme.closingUnits);
-        currentFolio.schemes.push(currentScheme);
+        // DEDUPE: Check if scheme exists in this folio
+        const existing = currentFolio.schemes.find(s => 
+          (s.isin && s.isin === currentScheme.isin) || 
+          (s.name && s.name === currentScheme.name)
+        );
+
+        if (existing) {
+          log('Merge duplicate scheme:', currentScheme.name);
+          // Merge transactions
+          existing.transactions = [...existing.transactions, ...currentScheme.transactions];
+          // Prefer non-zero units
+          if (currentScheme.closingUnits > 0) existing.closingUnits = currentScheme.closingUnits;
+          // Merge valuations
+          Object.assign(existing.valuation, currentScheme.valuation);
+        } else {
+          log('Save scheme:', currentScheme.name, '| txns:', currentScheme.transactions.length, '| units:', currentScheme.closingUnits);
+          currentFolio.schemes.push(currentScheme);
+        }
         currentScheme = null;
       }
     };
@@ -234,9 +250,17 @@
         inTxnTable = false;
         const folioNum = folioM[1].trim().replace(/\s+\/\s+/,'/');
         const folioPAN = (tl.match(/PAN(?:\d)?\s*[:\-]\s*([A-Z]{5}\d{4}[A-Z])/i)||[])[1]||'';
-        log('Folio:', folioNum, 'AMC:', currentAMC);
-        currentFolio = { folio:folioNum, amc:currentAMC, pan:folioPAN, schemes:[] };
-        result.folios.push(currentFolio);
+        
+        // DEDUPE: Reuse existing folio if seen earlier in same file
+        const existing = result.folios.find(f => f.folio === folioNum);
+        if (existing) {
+          log('Reuse Folio:', folioNum);
+          currentFolio = existing;
+        } else {
+          log('New Folio:', folioNum, 'AMC:', currentAMC);
+          currentFolio = { folio:folioNum, amc:currentAMC, pan:folioPAN, schemes:[] };
+          result.folios.push(currentFolio);
+        }
         pendingScheme = '';
         continue;
       }
@@ -249,8 +273,11 @@
       }
 
       /* ── Closing balance (and inline NAV/value in demat format) ── */
-      const closingM = tl.match(/Closing\s+(?:Unit\s+)?Balance\s*[:\-]?\s*([\d,]+\.?\d*)/i);
-      if (closingM && currentScheme) {
+      // IMPROVED: Avoid matching "Folio Total" summary lines while allowing "as on" dates
+      const isTotalLine = /Folio\s+Total|Folio\s+Balance|Grand\s+Total|Summary\s+Total/i.test(tl);
+      const closingM = tl.match(/(?:Closing|Balance)\s+(?:Unit\s+)?Balance\s*[:\-]?\s*([\d,]+\.?\d*)/i);
+      
+      if (closingM && currentScheme && !isTotalLine) {
         currentScheme.closingUnits = Math.abs(parseFloat(closingM[1].replace(/,/g,'')));
         log('Closing units:', currentScheme.closingUnits, 'for', currentScheme.name);
         // Demat format: "...NAV on 07-Apr-2026: INR 30.0774  Total Cost Value: ...  Market Value on 07-Apr-2026: INR 205,487.95"

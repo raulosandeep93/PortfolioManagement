@@ -294,8 +294,7 @@
 
   /* ══════════════════════════════════════════ HOLDINGS TABLE */
   let _allRows = [];
-  let _sortCol = 'current';
-  let _sortDir = 'desc';
+  let _sortCol = 'name', _sortDir = 'asc';
 
   function buildRows(portfolios) {
     const rows = [];
@@ -304,6 +303,10 @@
       const pColor = personColor(pIdx);
       for (const folio of (portfolio.folios || [])) {
         for (const scheme of (folio.schemes || [])) {
+          // SKIP fully redeemed funds (zero units)
+          const units = parseFloat(scheme.closingUnits || 0);
+          if (units <= 0.001) continue;
+
           const goalKey = (folio.folio || 'NA') + '_' + (scheme.isin || scheme.amfiCode || scheme.name || 'NA');
           rows.push({
             ...scheme, amc: folio.amc || '', folio: folio.folio || '', personIdx: pIdx, personName: pName, personColor: pColor,
@@ -360,42 +363,129 @@
     const catFilter = document.getElementById('table-filter-cat')?.value || '';
     const pFilter = document.getElementById('table-filter-person')?.value ?? '';
 
+    const plist = Array.isArray(portfolios) ? portfolios : (portfolios?.portfolios || []);
     let rows = filterRows(_allRows, search, catFilter, pFilter);
     rows = sortRows(rows, _sortCol, _sortDir);
 
-    const tbody = document.getElementById('holdings-tbody');
+    const cardsGrid = document.getElementById('mf-cards-view');
     const emptyEl = document.getElementById('table-empty');
-    if (!tbody || !emptyEl) return;
-    tbody.innerHTML = '';
 
-    if (rows.length === 0) { emptyEl.style.display = ''; return; }
+    if (!emptyEl || !cardsGrid) return;
+
+    if (rows.length === 0) { 
+      emptyEl.style.display = ''; 
+      cardsGrid.style.display = 'none';
+      return; 
+    }
+    
     emptyEl.style.display = 'none';
+    cardsGrid.style.display = '';
+    renderCardsContent(rows, portfolios, onRowClick);
+  }
 
-    const multiPerson = portfolios.length > 1;
-    const personTh = document.querySelector('.th-person');
-    if (personTh) personTh.style.display = multiPerson ? '' : 'none';
+
+  function renderCardsContent(rows, portfolios, onRowClick) {
+    const plist = Array.isArray(portfolios) ? portfolios : (portfolios?.portfolios || []);
+    const cardsGrid = document.getElementById('mf-cards-view');
+    cardsGrid.innerHTML = '';
+    const multiPerson = plist.length > 1;
 
     rows.forEach(r => {
       const a = r.analytics || {};
-      const catClass = { EQUITY: 'badge-equity', DEBT: 'badge-debt', HYBRID: 'badge-hybrid', OTHER: 'badge-other' }[a.category || 'EQUITY'] || 'badge-other';
+      const catClass = { 
+        EQUITY: 'badge-equity', 
+        EQUITY_LARGECAP: 'badge-equity', 
+        EQUITY_MIDCAP: 'badge-equity', 
+        EQUITY_SMALLCAP: 'badge-equity', 
+        EQUITY_FLEXICAP: 'badge-equity', 
+        EQUITY_ELSS: 'badge-equity', 
+        DEBT: 'badge-debt', 
+        HYBRID: 'badge-hybrid', 
+        OTHER: 'badge-other' 
+      }[a.category] || 'badge-other';
+
       const gainSign = (a.gainLoss || 0) >= 0 ? 'positive' : 'negative';
       const xirrSign = (a.xirr || 0) >= 0 ? 'positive' : 'negative';
+      
+      const xirrPct = a.xirr != null ? a.xirr * 100 : null;
+      const fundData = global.appState?.fundReturnsMap?.[r.amfiCode];
+      const comparisonMetric = (fundData?.threeYear || fundData?.oneYear || xirrPct);
+      const benchmark = global.Analytics.getBenchmark(a.category);
+      const benchReturn = benchmark.return;
+      
+      let adviceBadge = '';
+      if (comparisonMetric != null) {
+        const diff = comparisonMetric - benchReturn;
+        if (diff > 5) adviceBadge = '<span class="advice-badge excellent">Excellent</span>';
+        else if (diff > 0) adviceBadge = '<span class="advice-badge green">Good</span>';
+        else if (diff > -3) adviceBadge = '<span class="advice-badge yellow">Review</span>';
+        else adviceBadge = '<span class="advice-badge red">Redeem</span>';
+      } else {
+        adviceBadge = '<span class="advice-badge gray">Pending</span>';
+      }
 
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td><div class="td-fund-name">${r.name}</div><div class="td-amc">${r.amc} · ${r.folio}</div><span class="td-cat-badge ${catClass}">${(a.category || 'EQUITY').charAt(0) + (a.category || 'EQUITY').slice(1).toLowerCase()}</span></td>
-        ${multiPerson ? `<td><span class="td-person-badge" style="background:${r.personColor}22;color:${r.personColor}">${r.personName}</span></td>` : ''}
-        <td><input type="text" class="goal-input" data-key="${r.goalKey}" value="${r.goal || ''}" placeholder="Add goal..." /></td>
-        <td>${fmtUnits(a.units)}</td>
-        <td>${fmtNav(a.casNav)}</td>
-        <td class="td-live-nav">${fmtNav(a.liveNav || a.casNav)} ${a.isLiveNav ? '<span class="live-tag">LIVE</span>' : '<span class="cas-tag">CAS</span>'}</td>
-        <td>${fmt(a.totalInvested)}</td>
-        <td><strong>${fmt(a.currentValue)}</strong></td>
-        <td class="${gainSign}">${(a.gainLoss || 0) >= 0 ? '+' : ''}${fmt(a.gainLoss)}<br/><small>${fmtPct(a.absoluteReturn)}</small></td>
-        <td class="${xirrSign}"><strong>${a.xirr != null ? fmtXIRR(a.xirr) : '—'}</strong></td>
+      const card = document.createElement('div');
+      card.className = 'mf-card';
+      card.innerHTML = `
+        <div class="mf-card-header">
+          <div class="mf-card-amc">${r.amc} · Folio: ${r.folio}</div>
+          <div class="mf-card-title">${r.name}</div>
+          <div class="mf-card-badges">
+            <span class="td-cat-badge ${catClass}">${(a.category || 'EQUITY').split('_').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ')}</span>
+            ${multiPerson ? `<span class="td-person-badge" style="background:${r.personColor}22;color:${r.personColor}">${r.personName}</span>` : ''}
+            <span class="pill" style="padding: 2px 8px; font-size: 10px">${fmtUnits(a.units)} units</span>
+            ${a.isLiveNav ? '<span class="live-tag">LIVE</span>' : `<span class="cas-tag">CAS ${fmtNav(a.casNav)}</span>`}
+          </div>
+        </div>
+
+        <div class="mf-card-stats">
+          <div class="mf-card-stat">
+            <div class="mf-card-stat-label">Current Value</div>
+            <div class="mf-card-stat-value large">${fmt(a.currentValue)}</div>
+          </div>
+          <div class="mf-card-stat" style="text-align: right">
+            <div class="mf-card-stat-label">Total Gain</div>
+            <div class="mf-card-stat-value ${gainSign}">${(a.gainLoss || 0) >= 0 ? '+' : ''}${fmt(a.gainLoss)}</div>
+            <div class="sc-sub ${gainSign}" style="margin-top: 0">${fmtPct(a.absoluteReturn)}</div>
+          </div>
+          <div class="mf-card-stat">
+            <div class="mf-card-stat-label">Invested</div>
+            <div class="mf-card-stat-value">${fmt(a.totalInvested)}</div>
+            ${a.holdingYears > 0 ? `<div class="sc-sub" style="margin-top: 0">Held for ${a.holdingYears.toFixed(1)} yr</div>` : ''}
+          </div>
+          <div class="mf-card-stat" style="text-align: right">
+            <div class="mf-card-stat-label">Returns (XIRR)</div>
+            <div class="mf-card-stat-value ${xirrSign}">${a.xirr != null ? fmtXIRR(a.xirr) : '—'}</div>
+            ${a.personalCagr != null && a.holdingYears > 0.04 ? `<div class="sc-sub ${xirrSign}" style="margin-top: 0">My CAGR: ${a.personalCagr.toFixed(1)}%</div>` : ''}
+          </div>
+        </div>
+
+        <div class="mf-card-returns">
+          <div class="mf-card-return-item">
+            <div class="mf-card-return-label">1Y CAGR</div>
+            <div class="mf-card-return-val">${fundData?.oneYear ? fundData.oneYear.toFixed(1) + '%' : '—'}</div>
+          </div>
+          <div class="mf-card-return-item">
+            <div class="mf-card-return-label">3Y CAGR</div>
+            <div class="mf-card-return-val">${fundData?.threeYear ? fundData.threeYear.toFixed(1) + '%' : '—'}</div>
+          </div>
+          <div class="mf-card-return-item">
+            <div class="mf-card-return-label">Benchmark</div>
+            <div class="mf-card-return-val">${benchReturn.toFixed(1)}%</div>
+          </div>
+        </div>
+
+        <div class="mf-card-footer">
+          <div class="mf-card-goal-wrap">
+            <input type="text" class="goal-input" data-key="${r.goalKey}" value="${r.goal || ''}" placeholder="Linked goal..." />
+          </div>
+          <div class="mf-card-advice">
+            ${adviceBadge}
+          </div>
+        </div>
       `;
-      tr.addEventListener('click', (e) => { if (!e.target.classList.contains('goal-input')) onRowClick && onRowClick(r); });
-      tbody.appendChild(tr);
+      card.addEventListener('click', (e) => { if (!e.target.classList.contains('goal-input')) onRowClick && onRowClick(r); });
+      cardsGrid.appendChild(card);
     });
 
     document.querySelectorAll('.goal-input').forEach(input => {
@@ -414,18 +504,6 @@
     });
   }
 
-  function initTableSort(portfolios, onRowClick) {
-    document.querySelectorAll('#holdings-table th.sortable').forEach(th => {
-      th.addEventListener('click', () => {
-        const col = th.dataset.col;
-        if (_sortCol === col) _sortDir = _sortDir === 'asc' ? 'desc' : 'asc';
-        else { _sortCol = col; _sortDir = 'desc'; }
-        document.querySelectorAll('#holdings-table th').forEach(t => t.classList.remove('sort-asc', 'sort-desc'));
-        th.classList.add(_sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
-        renderTableBody(portfolios, onRowClick);
-      });
-    });
-  }
 
   /* ═══════════════════════════════════════ TRANSACTION PANEL */
   function openTransactionPanel(row) {
@@ -474,47 +552,59 @@
       }
 
       // 3. Sync internal visibility
-      const hasMF = (global.appState?.portfolios?.length > 0);
-      const hasNPS = (global.appState?.npsPortfolios?.length > 0);
-      const hasStocks = (global.appState?.stocksPortfolios?.length > 0);
-      const hasSavings = (global.appState?.savings?.accounts?.length > 0 || global.appState?.savings?.fds?.length > 0 || global.appState?.savings?.rds?.length > 0);
+      const state = global.appState || {};
+      const hasMF = (state.portfolios?.length > 0);
+      const hasNPS = (state.npsPortfolios?.length > 0);
+      const hasStocks = (state.stocksPortfolios?.length > 0);
+      const hasSavings = (state.savings?.accounts?.length > 0 || state.savings?.fds?.length > 0 || state.savings?.rds?.length > 0);
+      const hasData = hasMF || hasNPS || hasStocks || hasSavings;
 
       // Explicitly update MF view if switching to MF
       if (id === 'mf') updateMFViewState(hasMF);
       // Explicitly update Overview if switching to Overview
-      if (id === 'overview') updateOverviewState(hasMF || hasNPS || hasStocks || hasSavings);
+      if (id === 'overview') updateOverviewState(hasData);
       // Render Goals screen if switching to Goals
-      if (id === 'goals') renderGoalsDashboard(global.appState?.portfolios || [], global.appState?.npsPortfolios || []);
+      if (id === 'goals') renderGoalsDashboard(state.portfolios || [], state.npsPortfolios || []);
       // Explicitly update NPS if switching to NPS
       if (id === 'nps') updateNPSViewState(hasNPS);
       // Explicitly update Stocks if switching to Stocks
       if (id === 'stocks-in') updateStocksViewState(hasStocks);
       // Explicitly update Savings if switching to Savings
-      if (id === 'savings') renderSavingsDashboard(global.appState?.savings);
+      if (id === 'savings') renderSavingsDashboard(state.savings);
 
       // 4. Update Global Nav Actions
       const addBtn = document.getElementById('nav-add-btn');
       const expBtn = document.getElementById('nav-export-btn');
       const impBtn = document.getElementById('nav-import-btn');
-      const tabs   = document.getElementById('nav-person-tabs');
+      const navTabs = document.getElementById('nav-person-tabs');
       const debug  = document.getElementById('nav-debug-btn');
 
       const showAdd = (id === 'mf' && hasMF) || (id === 'nps' && hasNPS) || (id === 'stocks-in' && hasStocks);
 
       if (addBtn) addBtn.style.display = showAdd ? '' : 'none';
-      if (expBtn) expBtn.style.display = (id === 'mf' || id === 'nps' || id === 'stocks-in' || (id === 'overview' && (hasMF || hasNPS || hasStocks))) ? '' : 'none';
-      if (impBtn) impBtn.style.display = (id === 'mf' || id === 'nps' || id === 'stocks-in' || (id === 'overview' && (hasMF || hasNPS || hasStocks))) ? '' : 'none';
-      if (tabs)   tabs.style.display   = (id === 'mf' && hasMF) ? 'flex' : 'none';
+      if (expBtn) expBtn.style.display = (id === 'mf' || id === 'nps' || id === 'stocks-in' || (id === 'overview' && hasData)) ? '' : 'none';
+      if (impBtn) impBtn.style.display = (id === 'mf' || id === 'nps' || id === 'stocks-in' || (id === 'overview' && hasData)) ? '' : 'none';
+      if (navTabs) navTabs.style.display = (id === 'mf' && hasMF) ? 'flex' : 'none';
       if (debug)  debug.style.display  = ((id === 'mf' && hasMF) || (id === 'nps' && hasNPS)) ? '' : 'none';
 
       // 5. Refresh data if necessary
       if (id === 'overview' && hasData) {
-        setTimeout(() => renderLandingPage(global.appState), 10);
+        setTimeout(() => renderLandingPage(state), 10);
       }
     } catch (err) {
-      console.error('FolioSense Navigation Error:', err);
-      toast('error', 'Navigation Error', 'Something went wrong while switching screens.');
+      console.error('[UI] Navigation Error Detail:', err);
+      toast('error', 'Navigation Error', 'Something went wrong while switching screens. Check browser console.');
     }
+  }
+
+  function initMutualFundUI(portfolios, onRowClick) {
+    // Wire Search & Filters
+    ['table-search', 'table-filter-cat', 'table-filter-person'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('input', () => renderTableBody(portfolios, onRowClick));
+      }
+    });
   }
 
   function updateMFViewState(hasData) {
@@ -1454,7 +1544,7 @@
   global.UI = {
     fmt, fmtPct, fmtXIRR, fmtUnits, fmtNav, fmtDate,
     toast, showLoading, setLoading, hideLoading,
-    renderSummaryCards, renderPersonTabs, renderCharts, renderTable, renderTableBody, initTableSort,
+    renderSummaryCards, renderPersonTabs, renderCharts, renderTable, renderTableBody, initMutualFundUI,
     openTransactionPanel, closeTransactionPanel, setScreen, updateMFViewState,
     renderLandingPage, renderGoalsDashboard, openGoalManager, buildRows, personColor, exportFullBackup, importFullData, updateBackupReminder,
     updateNPSViewState, renderNPSDashboard,

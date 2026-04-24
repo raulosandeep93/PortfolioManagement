@@ -207,9 +207,18 @@
         <div class="chart-card"><div class="chart-card-header"><h3 class="chart-title">Top Holdings</h3></div><div class="chart-wrap"><canvas id="chart-top"></canvas></div></div>
       </div>
       <div class="table-section">
-        <div class="table-header-row"><h2 class="table-heading">Holdings</h2><div class="table-controls"><div class="search-wrap"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" id="table-search" placeholder="Search fund…" /></div><select id="table-filter-cat" class="filter-select"><option value="">All Categories</option><option value="EQUITY">Equity</option><option value="DEBT">Debt</option><option value="HYBRID">Hybrid</option><option value="OTHER">Other</option></select><select id="table-filter-person" class="filter-select" style="display:none"><option value="">All Persons</option></select></div></div>
-        <div class="table-wrap"><table id="holdings-table"><thead><tr><th class="sortable" data-col="name">Fund Name</th><th class="sortable th-person" data-col="person" style="display:none">Owner</th><th class="sortable" data-col="goal">Goal</th><th class="sortable" data-col="units">Units</th><th class="sortable" data-col="nav">Nav (CAS)</th><th class="sortable" data-col="liveNav">Live Nav</th><th class="sortable" data-col="invested">Invested</th><th class="sortable" data-col="current">Current</th><th class="sortable" data-col="gain">Gain/Loss</th><th class="sortable" data-col="xirr">XIRR</th></tr></thead><tbody id="holdings-tbody"></tbody></table></div>
+        <div class="table-header-row">
+          <h2 class="table-heading">Holdings</h2>
+          <div class="table-controls">
+            <div class="search-wrap"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" id="table-search" placeholder="Search fund…" /></div>
+            <select id="table-filter-cat" class="filter-select"><option value="">All Categories</option><option value="EQUITY">Equity</option><option value="DEBT">Debt</option><option value="HYBRID">Hybrid</option><option value="OTHER">Other</option></select>
+            <select id="table-filter-person" class="filter-select" style="display:none"><option value="">All Persons</option></select>
+          </div>
+        </div>
+        
+        <div id="mf-cards-view" class="mf-cards-grid"></div>
         <div id="table-empty" class="table-empty" style="display:none">No funds found.</div>
+
       </div>
     </div>
   </section>

@@ -104,5 +104,55 @@
     return results;
   }
 
-  global.NavFetch = { fetchOne, fetchAll, searchAmfiCode };
+  /* ── Fetch 1Y and 3Y returns for a fund ─────────────────────── */
+  async function fetchReturns(amfiCode) {
+    if (!amfiCode) return null;
+    const HISTORY_TIMEOUT = 25000; // History can be large
+    try {
+      const res = await withTimeout(fetch(`https://api.mfapi.in/mf/${amfiCode}`), HISTORY_TIMEOUT);
+      if (!res.ok) return null;
+      const json = await res.json();
+      if (!json?.data || json.data.length < 5) return null;
+
+      const data = json.data;
+      const latestPrice = parseFloat(data[0].nav);
+      const [d1, m1, y1] = data[0].date.split('-');
+      const latestDate = new Date(+y1, +m1 - 1, +d1);
+      
+      const getCAGR = (days) => {
+        const target = new Date(latestDate);
+        target.setDate(target.getDate() - days);
+        
+        let entry = data.find(d => {
+          const [day, mo, yr] = d.date.split('-');
+          const dDate = new Date(+yr, +mo - 1, +day);
+          return dDate <= target;
+        });
+
+        if (!entry) entry = data[data.length - 1]; // Use oldest available
+
+        const oldPrice = parseFloat(entry.nav);
+        if (!oldPrice || oldPrice <= 0) return null;
+
+        const [d2, m2, y2] = entry.date.split('-');
+        const oldDate = new Date(+y2, +m2 - 1, +d2);
+        
+        const yearsDiff = (latestDate - oldDate) / (1000 * 3600 * 24 * 365.25);
+        if (yearsDiff < 0.1) return null; // Too little data for CAGR
+
+        return (Math.pow(latestPrice / oldPrice, 1 / yearsDiff) - 1) * 100;
+      };
+
+      return {
+        oneYear: getCAGR(365),
+        threeYear: getCAGR(1095),
+        schemeName: json.meta?.scheme_name
+      };
+    } catch (err) {
+      console.warn(`[NavFetch] Error fetching history for ${amfiCode}:`, err);
+      return null;
+    }
+  }
+
+  global.NavFetch = { fetchOne, fetchAll, searchAmfiCode, fetchReturns };
 })(window);
