@@ -85,20 +85,43 @@
         if (um) result.investor.uan = um[1];
       }
       if (!result.investor.memberId) {
-        const mi = tl.match(/(?:Member\s*ID|Member\s*Id|MID)\s*[:\-]\s*([A-Z0-9\/]{10,})/i);
-        if (mi) result.investor.memberId = mi[1].trim();
+        // Pattern: Label followed by colon/hyphen and then the ID
+        const mi = tl.match(/(?:Member\s*(?:ID|Id)|MID|Member\s*Account\s*Number)\s*[:\-]\s*([A-Z0-9\/\s\-]{10,})/i);
+        // Pattern: Label followed by space and then the ID (no colon)
+        const mi2 = tl.match(/(?:Member\s*(?:ID|Id)|MID|Member\s*Account\s*Number)\s+([A-Z0-9\/\-]{10,})/i);
+        
+        if (mi) {
+            result.investor.memberId = mi[1].trim().replace(/\s+/g, '');
+        } else if (mi2) {
+            result.investor.memberId = mi2[1].trim().replace(/\s+/g, '');
+        } else if (/(?:Member\s*(?:ID|Id)|MID|Member\s*Account\s*Number)\s*$/i.test(tl)) {
+            const next = lines[i+1]?.text.trim();
+            if (next && /^[A-Z0-9\/\s\-]{10,}$/.test(next)) {
+                result.investor.memberId = next.replace(/\s+/g, '');
+            }
+        } else if (/^[A-Z]{2}[A-Z]{3}\d{17}$/.test(tl) || /^[A-Z]{5}\d{7}\d{3}\d{7}$/.test(tl)) {
+            // Pure ID pattern Match
+            result.investor.memberId = tl;
+        }
       }
 
       // ── Establishment Meta ──
       if (!result.establishment.name) {
-        const em = tl.match(/(?:Establishment\s*Name|Employer\s*Name)\s*[:\-]\s*(.+)/i);
+        const em = tl.match(/(?:Establishment\s*Name|Employer\s*Name|Name\s*of\s*Establishment|Est\s*Name)\s*[:\-]\s*(.+)/i);
+        const em2 = tl.match(/(?:Establishment\s*Name|Employer\s*Name|Name\s*of\s*Establishment|Est\s*Name)\s+([A-Z].+)/i);
         if (em) {
             result.establishment.name = em[1].trim();
-        } else if (/ESTABLISHMENT\s*NAME\s*$/i.test(tl)) {
-            // Some PDFs have "Establishment Name" on line i and value on line i+1
+        } else if (em2) {
+            result.establishment.name = em2[1].trim();
+        } else if (/ESTABLISHMENT\s*NAME\s*$/i.test(tl) || /Name\s*of\s*Establishment\s*$/i.test(tl)) {
             const next = lines[i+1]?.text.trim();
             if (next && !next.includes(':')) result.establishment.name = next;
         }
+      }
+      
+      if (!result.establishment.id) {
+          const eid = tl.match(/(?:Establishment\s*ID|Est\s*ID)\s*[:\-\s]\s*([A-Z0-9]{15,})/i);
+          if (eid) result.establishment.id = eid[1].trim();
       }
 
       // ── Balances Detection (More robust patterns) ──

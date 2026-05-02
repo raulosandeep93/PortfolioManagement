@@ -131,13 +131,16 @@
       const amt  = Math.abs(txn.rawAmount || 0);
       const u    = Math.abs(txn.units || 0);
 
-      if (['PURCHASE', 'PURCHASE_SIP', 'SWITCH_IN', 'DIVIDEND_REINVEST'].includes(type) && amt > 0) {
-        totalInvested += amt;
-        runningUnits += u;
-        // Dividend reinvestment is not a "pocket" cashflow for XIRR
+      if (['PURCHASE', 'PURCHASE_SIP', 'SWITCH_IN', 'DIVIDEND_REINVEST'].includes(type) && u > 0) {
+        // Only out-of-pocket transactions increase 'totalInvested' for dashboard display.
+        // Reinvested dividends are internal gains and shouldn't inflate the "Invested" capital.
         if (type !== 'DIVIDEND_REINVEST') {
-          cashflows.push({ date: txn.date, amount: -amt });
+            totalInvested += amt;
+            // Pocket outflow for XIRR
+            cashflows.push({ date: txn.date, amount: -amt });
         }
+        
+        runningUnits += u;
       } else if (['REDEMPTION', 'SWITCH_OUT'].includes(type) && u > 0) {
         // Reduction in cost basis based on average cost
         if (runningUnits > 0) {
@@ -156,6 +159,18 @@
     if (currentValue > 0 && cashflows.length > 0) {
       cashflows.push({ date: new Date(), amount: currentValue });
     }
+
+    // FALLBACK: If totalInvested is still 0 (due to missing transaction amounts or no transaction parsing),
+    // use the cost value reported in the CAS summary if available.
+    if (totalInvested <= 0 && (scheme.valuation?.cost || 0) > 0) {
+        totalInvested = scheme.valuation.cost;
+    }
+    
+    // SECONDARY FALLBACK: If still 0 and we have units and a previous NAV but no cost basis,
+    // we can't accurately guess, but ₹0 is almost always wrong. 
+    // If the user has transactions but they resulted in 0 amount (e.g. missing column), 
+    // we already derived it in the parser (if we did).
+    // If not, we just report what we found.
 
     // Calculate Holding Period (from first purchase)
     const firstTxn = [...(scheme.transactions || [])]

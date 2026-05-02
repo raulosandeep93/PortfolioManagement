@@ -84,7 +84,8 @@
     const date = parseDate(dm[1]);
     if (!date || isNaN(date.getTime())) return null;
     const rest = text.slice(dm[0].length).trim();
-    if (/Opening\s+Balance/i.test(rest)) return null;
+    if (!rest || /Opening\s+Balance|Folio\s+Total|Sub\s+Total|Transaction\s+Total|Summary\s+Total|[\*]{5,}/i.test(rest)) return null;
+    if (rest.length < 5) return null; // Too short for a real transaction description
 
     // Split by 2+ spaces (column delimiter)
     const cols = rest.split(/\s{2,}|\t/).map(s => s.trim()).filter(Boolean);
@@ -105,10 +106,31 @@
     }
     const type = classifyTxn(description);
     let amount=0, units=0, nav=0, balance=0;
-    if      (nums.length>=4) [amount,units,nav,balance]=nums.slice(-4);
-    else if (nums.length===3) [units,nav,balance]=nums;
-    else if (nums.length===2) [nav,balance]=nums;
-    else if (nums.length===1) balance=nums[0];
+    if (nums.length >= 4) {
+      const last4 = nums.slice(-4);
+      const last5 = nums.slice(-5);
+      // Logic: Amount should be approx Units * Price
+      // Check if last4[0] is amount
+      if (Math.abs(last4[0] - (last4[1] * last4[2])) < Math.abs(last4[0] * 0.05)) {
+          [amount, units, nav, balance] = last4;
+      } else if (nums.length >= 5 && Math.abs(last5[0] - (last5[2] * last5[3])) < Math.abs(last5[0] * 0.05)) {
+          [amount, , units, nav, balance] = last5;
+      } else {
+          [amount, units, nav, balance] = last4;
+      }
+      // If amount is still 0 but we have units/nav, derive it.
+      // BUT: avoid if n1 * n2 is very different from any num in candidates (to avoid summary line collisions)
+      if (Math.abs(amount) < 0.1 && units > 0 && nav > 1) {
+          amount = units * nav;
+      }
+    }
+    else if (nums.length === 3) {
+      [units, nav, balance] = nums;
+      // Derive amount ONLY if we are fairly sure it's a txn (description length check done earlier)
+      amount = units * nav;
+    }
+    else if (nums.length === 2) [nav, balance] = nums;
+    else if (nums.length === 1) balance = nums[0];
     return { date, description: description.replace(/\s+/g,' ').trim(), type, rawAmount:Math.abs(amount), units, nav, balance };
   }
 
@@ -313,7 +335,8 @@
       if (inTxnTable && currentScheme) {
         const txn = parseTxnLine(tl);
         if (txn) { currentScheme.transactions.push(txn); continue; }
-        if (/Closing|Market\s+Value|ISIN|Folio|^-{5,}/i.test(tl)) inTxnTable = false;
+        const isTxnTableEnd = /^(?:Closing|Folio|Market\s+Value|Valuation|Grand\s+Total|Summary\s+Total)|ISIN\s*[:\-]|^-{5,}/i.test(tl);
+        if (isTxnTableEnd) inTxnTable = false;
       }
 
       /* ── AMC name detection ─────────────────────────────────── */

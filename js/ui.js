@@ -652,6 +652,28 @@
       allHoldings.push(...(p.holdings || []));
     });
 
+    // Handle Global Stocks Goal
+    const stocksGoalInput = document.getElementById('stocks-global-goal');
+    if (stocksGoalInput) {
+      stocksGoalInput.value = getGoal('STOCKS_GLOBAL_GOAL');
+      
+      const newStocksGoalInput = stocksGoalInput.cloneNode(true);
+      stocksGoalInput.parentNode.replaceChild(newStocksGoalInput, stocksGoalInput);
+      
+      newStocksGoalInput.addEventListener('blur', (e) => {
+        saveGoal('STOCKS_GLOBAL_GOAL', e.target.value);
+        if (global._FolioSense) {
+          global._FolioSense.isDirtySinceExport = true;
+          const dot = document.getElementById('export-reminder-dot');
+          if (dot) dot.style.display = 'block';
+        }
+        // Force refresh of goals data
+        if (global.appState) {
+            renderGoalsDashboard(global.appState.portfolios || [], global.appState.npsPortfolios || []);
+        }
+      });
+    }
+
     const gainPct = totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0;
     
     const invEl = document.getElementById('st-invested-val');
@@ -845,6 +867,16 @@
         });
       });
     });
+
+    // ── Indian Stocks contributions to goals ──────────────────────────
+    const globalStocksGoal = getGoal('STOCKS_GLOBAL_GOAL')?.trim();
+    if (globalStocksGoal) {
+        let sTotal = 0;
+        (global.appState?.stocksPortfolios || []).forEach(p => {
+            sTotal += p._summary?.totalCurrentValue || 0;
+        });
+        goalValues[globalStocksGoal] = (goalValues[globalStocksGoal] || 0) + sTotal;
+    }
 
     // ── Bank Savings contributions to goals ───────────────────────────
     const savings = global.appState?.savings || { accounts: [], fds: [], rds: [] };
@@ -1041,9 +1073,13 @@
 
     npsPortfolios.forEach(portfolio => {
       if (portfolio.pfm) pfmLabel = portfolio.pfm;
-      // If we have a summary total but schemes won't yield it, we'll try to use it
-      let portfolioInvested = portfolio._summary?.totalInvested || 0;
+
+      // ── USE PDF SUMMARY VALUES as source of truth for cards ────
+      const pSummary = portfolio._summary || {};
+      const hasSummary = pSummary.totalValue > 0 || pSummary.totalInvested > 0;
+
       let schemesInvestedSum = 0;
+      let schemesCurrentSum = 0;
 
       portfolio.tiers.forEach(tier => {
         const tierBlock = document.createElement('div');
@@ -1068,13 +1104,13 @@
         tier.schemes.forEach(scheme => {
           const a = scheme.analytics || {};
           schemesInvestedSum += a.totalInvested || 0;
-          currentCorpus += a.currentValue || 0;
+          schemesCurrentSum += a.currentValue || 0;
 
           if (scheme.transactions) {
             scheme.transactions.forEach(txn => {
               const isContrib = ['CONTRIBUTION','EMPLOYEE_CONTRIBUTION','EMPLOYER_CONTRIBUTION','VOLUNTARY_CONTRIBUTION'].includes(txn.type);
               const isWithdraw = txn.type === 'WITHDRAWAL';
-              const amt = Math.abs(txn.rawAmount || 0);
+              const amt = Math.abs(txn.amount || txn.rawAmount || 0);
               if (isContrib && amt > 0) {
                 allCashflows.push({ date: txn.date instanceof Date ? txn.date : new Date(txn.date), amount: -amt });
               } else if (isWithdraw && amt > 0) {
@@ -1104,9 +1140,15 @@
         tierBlock.innerHTML = headerHTML + tableHTML;
         if (tiersContainer) tiersContainer.appendChild(tierBlock);
       });
-      // After all tiers, check if we found any invested amount. If not, use the summary if available.
-      if (schemesInvestedSum > 0) totalInvested += schemesInvestedSum;
-      else totalInvested += portfolioInvested;
+
+      // ── SUMMARY CARDS: prefer PDF summary values over computed ones ──
+      if (hasSummary) {
+        totalInvested += pSummary.totalInvested || 0;
+        currentCorpus += pSummary.totalValue || 0;
+      } else {
+        totalInvested += schemesInvestedSum;
+        currentCorpus += schemesCurrentSum;
+      }
     });
 
     // Handle Global NPS Goal
@@ -1135,13 +1177,9 @@
     gainLoss = currentCorpus - totalInvested;
     const absReturn = totalInvested > 0 ? (gainLoss / totalInvested) * 100 : 0;
     
-    if (currentCorpus > 0 && allCashflows.length > 0) {
-      allCashflows.push({ date: new Date(), amount: currentCorpus });
-    }
-    
     let xirrVal = null;
     if (global.Analytics?.xirr && allCashflows.length >= 2) {
-      xirrVal = global.Analytics.xirr(allCashflows.filter(f => Math.abs(f.amount) > 0.01));
+      xirrVal = global.Analytics.xirr([...allCashflows, { date: new Date(), amount: currentCorpus }].filter(f => Math.abs(f.amount) > 0.01));
     }
 
     const pfmEl = document.getElementById('nps-pfm-label');
@@ -1163,16 +1201,54 @@
       gainPctEl.textContent = fmtPct(absReturn);
       gainPctEl.className = 'sc-sub ' + (absReturn >= 0 ? 'positive' : 'negative');
     }
-    
-    const xirrEl = document.getElementById('nps-sc-xirr');
-    if (xirrEl) xirrEl.textContent = xirrVal != null ? fmtXIRR(xirrVal) : '—';
 
-    // Update Debug Panel
-    if (preSchemes) preSchemes.textContent = JSON.stringify(npsPortfolios.map(p => ({
-        investor: p.investor, pfm: p.pfm, summary: p._summary,
-        tiers: p.tiers.map(t => ({ tier: t.tier, schemes: t.schemes.map(s => ({ name: s.name, ac: s.assetClass, units: s.units, nav: s.nav, val: s.currentValue, txns: s.transactions?.length })) }))
-    })), null, 2);
-    if (preLines && npsPortfolios[0]?._rawLines) preLines.textContent = npsPortfolios[0]._rawLines.slice(0, 80).join('\n');
+    const xirrCardVal = document.getElementById('nps-sc-xirr');
+    if (xirrCardVal) xirrCardVal.textContent = xirrVal != null ? fmtXIRR(xirrVal) : '—';
+
+    // ── NPS Recent Transactions ─────────────────────────────────────────
+    const allTxns = [];
+    npsPortfolios.forEach(p => {
+      p.tiers.forEach(t => {
+        t.schemes.forEach(s => {
+          if (s.transactions) {
+            s.transactions.forEach(tx => {
+              allTxns.push({ ...tx, assetClass: s.assetClass, tier: t.tier });
+            });
+          }
+        });
+      });
+    });
+
+    const txnSection = document.getElementById('nps-txns-section');
+    const txnBody = document.getElementById('nps-txns-tbody');
+    if (txnSection && txnBody) {
+      if (allTxns.length > 0) {
+        // Sort by date descending
+        allTxns.sort((a,b) => (b.date instanceof Date ? b.date : new Date(b.date)) - (a.date instanceof Date ? a.date : new Date(a.date)));
+        
+        txnBody.innerHTML = allTxns.map(tx => {
+          const isContrib = ['CONTRIBUTION','EMPLOYEE_CONTRIBUTION','EMPLOYER_CONTRIBUTION','VOLUNTARY_CONTRIBUTION'].includes(tx.type);
+          const tColor = isContrib ? 'positive' : (tx.type === 'WITHDRAWAL' ? 'negative' : 'inherit');
+          const tSign = isContrib ? '+' : (tx.type === 'WITHDRAWAL' ? '-' : '');
+          const txAmt = tx.amount || tx.rawAmount || 0;
+          return `
+            <tr>
+              <td>${fmtDate(tx.date)}</td>
+              <td><div class="td-fund-name">${tx.description || tx.type}</div><div class="td-amc" style="font-size:10px">${tx.tier || 'Tier I'}</div></td>
+              <td><span class="status-badge" style="background:rgba(255,255,255,0.05); color:var(--text2); font-size:10px">${tx.assetClass || '—'}</span></td>
+              <td style="text-align:right">${fmtUnits(tx.units)}</td>
+              <td style="text-align:right">${fmtNav(tx.nav)}</td>
+              <td style="text-align:right" class="${tColor}"><strong>${tSign}${fmt(txAmt)}</strong></td>
+            </tr>
+          `;
+        }).join('');
+        txnSection.style.display = 'block';
+      } else {
+        txnSection.style.display = 'none';
+      }
+    }
+    const pfmLabelEl = document.getElementById('nps-pfm-label');
+    if (pfmLabelEl) pfmLabelEl.textContent = pfmLabel || 'Protean CRA';
   }
 
   /* ════════════════════════════════════════════════ FOREIGN EQUITIES DASHBOARD */
@@ -1383,7 +1459,9 @@
                     <td>
                         <div class="td-fund-name">${item.name}</div>
                         <div class="td-amc" style="color:var(--text3); font-size:11px">
-                            ${item.establishmentName ? `Employer: ${item.establishmentName}<br>` : ''}
+                            ${item.establishmentName ? `Employer: ${item.establishmentName}` : ''}
+                            ${item.establishmentId ? ` (${item.establishmentId})` : ''}
+                            ${item.establishmentName || item.establishmentId ? '<br>' : ''}
                             ${item.uan ? `UAN: ${item.uan}` : ''}
                             ${item.memberId ? `${item.uan ? ' | ' : ''}MID: ${item.memberId}` : ''}
                         </div>
@@ -1434,12 +1512,15 @@
       empty.style.display = 'none';
 
       data.forEach((item, idx) => {
+        if (!item.id) item.id = Date.now() + Math.random() + idx; // Migration for old entries
         const tr = document.createElement('tr');
         if (type === 'account') {
           tr.innerHTML = `
             <td><div class="td-fund-name">${item.bank}</div></td>
             <td>${item.type}</td>
-            <td>${item.goal || '—'}</td>
+            <td>
+              <input type="text" class="savings-goal-input goal-input" data-id="${item.id}" data-type="accounts" value="${item.goal || ''}" placeholder="Link goal..." />
+            </td>
             <td style="text-align:right"><strong>${fmt(item.balance)}</strong></td>
             <td style="text-align:right"><button class="btn btn-ghost" style="padding:4px" onclick="UI.deleteSavings('accounts', ${idx})">🗑️</button></td>
           `;
@@ -1449,7 +1530,9 @@
             <td>${fmt(item.principal)}</td>
             <td>${item.rate}%</td>
             <td>${fmtDate(item.maturityDate)}</td>
-            <td>${item.goal || '—'}</td>
+            <td>
+              <input type="text" class="savings-goal-input goal-input" data-id="${item.id}" data-type="${type}s" value="${item.goal || ''}" placeholder="Link goal..." />
+            </td>
             <td style="text-align:right"><strong>${fmt(item.maturityValue)}</strong></td>
             <td style="text-align:right"><button class="btn btn-ghost" style="padding:4px" onclick="UI.deleteSavings('${type}s', ${idx})">🗑️</button></td>
           `;

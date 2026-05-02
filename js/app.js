@@ -262,44 +262,59 @@
     if (fileArr.length === 0) { UI.toast('warning', 'No PDFs', 'Please upload .pdf files.'); return; }
 
     UI.showLoading('Loading…', 'Preparing NPS files', 0);
-    const newPortfolios = [];
+    const newParsedFiles = [];
 
     for (let i = 0; i < fileArr.length; i++) {
+        UI.setLoading(`Parsing ${fileArr[i].name}…`, `File ${i+1}/${fileArr.length}`, Math.round((i/fileArr.length)*80));
         const parsed = await processNPSFile(fileArr[i]);
         closePasswordModal();
-        if (parsed) newPortfolios.push(parsed);
+        if (parsed && parsed.transactions && parsed.transactions.length > 0) {
+          newParsedFiles.push(parsed);
+        } else if (parsed && parsed.holdings && Object.keys(parsed.holdings).length > 0) {
+          // Holdings-only statement, still useful
+          newParsedFiles.push(parsed);
+        }
     }
 
-    const validNewPortfolios = newPortfolios.filter(p => 
-      p.tiers && p.tiers.some(t => t.schemes && t.schemes.length > 0)
-    );
-
-    if (validNewPortfolios.length === 0) {
+    if (newParsedFiles.length === 0) {
       UI.hideLoading();
-      UI.toast('warning', 'No Data Found', 'Could not extract NPS data from the statement. Try another format.');
+      UI.toast('warning', 'No Data Found', 'Could not extract NPS data from the statement(s). Try another format.');
       return;
     }
 
-    // Purge any previously parsed faulty portfolios that resulted in 0 units.
-    // De-duplicate based on PRAN (best) or Name (fallback)
-    validNewPortfolios.forEach(newP => {
-      const pran = newP.investor?.pran;
-      const name = newP.investor?.name;
-      if (pran || name) {
-        const idx = state.npsPortfolios.findIndex(p => 
-          (pran && p.investor?.pran === pran) || (!pran && name && p.investor?.name === name)
-        );
-        if (idx !== -1) {
-          state.npsPortfolios[idx] = newP;
-        } else {
-          state.npsPortfolios.push(newP);
-        }
-      } else {
-        state.npsPortfolios.push(newP);
-      }
-    });
+    UI.setLoading('Building portfolio…', 'Processing transactions', 90);
 
-    UI.toast('success', 'Parsed!', `${validNewPortfolios.length} NPS statement(s) processed.`);
+    // Build portfolio fresh from ONLY the newly uploaded files
+    // DO NOT merge with old data — user uploads all statements each time
+    const freshPortfolio = NPSParser.buildPortfolio(newParsedFiles);
+
+    if (!freshPortfolio) {
+      UI.hideLoading();
+      UI.toast('warning', 'No Data Found', 'Could not build NPS portfolio from the uploaded statements.');
+      return;
+    }
+
+    // Store the parsed files so future incremental uploads could merge
+    freshPortfolio._parsedFiles = newParsedFiles;
+
+    // Find existing portfolio for this investor (by PRAN or name) and REPLACE it
+    const newPRAN = newParsedFiles[0]?.investor?.pran;
+    const newName = newParsedFiles[0]?.investor?.name;
+    let existingIdx = -1;
+    if (newPRAN || newName) {
+      existingIdx = state.npsPortfolios.findIndex(p =>
+        (newPRAN && p.investor?.pran === newPRAN) || (!newPRAN && newName && p.investor?.name === newName)
+      );
+    }
+
+    if (existingIdx !== -1) {
+      state.npsPortfolios[existingIdx] = freshPortfolio;
+    } else {
+      state.npsPortfolios.push(freshPortfolio);
+    }
+
+    const totalTxns = freshPortfolio.tiers.reduce((sum, t) => sum + t.schemes.reduce((s, sc) => s + sc.transactions.length, 0), 0);
+    UI.toast('success', 'NPS Updated!', `${newParsedFiles.length} file(s) · ${totalTxns} transactions`);
 
     UI.hideLoading();
     state.isDirtySinceExport = true;
@@ -637,6 +652,7 @@
       }
       
       const entry = {
+        id: Date.now() + Math.random(),
         bank: bankName,
         goal: document.getElementById('sav-goal').value.trim(),
       };
@@ -744,6 +760,30 @@
             }
         };
     }
+
+    // Bank Savings Goal Delegation
+    const handleSavingsGoalChange = (e) => {
+        if (e.target.classList.contains('savings-goal-input')) {
+            const id = parseFloat(e.target.dataset.id);
+            const type = e.target.dataset.type; // accounts, fds, or rds
+            const newGoal = e.target.value.trim();
+            const entry = state.savings[type].find(n => n.id === id);
+            if (entry) {
+                entry.goal = newGoal;
+                if (newGoal && !state.goalsMetadata[newGoal]) {
+                    state.goalsMetadata[newGoal] = { targetAmount: 0, yearsToGoal: 10, expectedReturn: 12, inflation: 7 };
+                }
+                saveState();
+                refreshDashboard();
+                UI.toast('info', 'Goal Updated', `Savings entry linked to "${newGoal || 'no goal'}".`);
+            }
+        }
+    };
+
+    ['savings-accounts-tbody', 'savings-fd-tbody', 'savings-rd-tbody'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.onchange = handleSavingsGoalChange;
+    });
 
     const epfTable = document.getElementById('epf-tbody');
     if (epfTable) {
@@ -930,7 +970,6 @@
     if (!files || files.length === 0) return;
     const file = files[0];
     UI.showLoading('Parsing EPF Passbook', file.name, 30);
-
     try {
         const result = await global.EPFParser.parsePDF(file);
         if (!result.summary || (result.summary.employeeShare === 0 && result.summary.employerShare === 0)) {
@@ -941,6 +980,7 @@
 
         const name = result.investor.name || 'EPF Account';
         const estName = result.establishment.name || '';
+        const estId = result.establishment.id || '';
         const uan = result.investor.uan || '';
         const memberId = result.investor.memberId || '';
         
@@ -948,11 +988,19 @@
         let existingIdx = -1;
         if (memberId) {
             existingIdx = state.epf.findIndex(e => e.memberId === memberId);
-        } else if (uan && estName) {
-            // Fallback: match by UAN + Establishment if no Member ID
-            existingIdx = state.epf.findIndex(e => e.uan === uan && e.establishmentName === estName);
-        } else {
-            existingIdx = state.epf.findIndex(e => e.name === name && e.establishmentName === estName);
+        } else if (uan && estId) {
+            // Stronger fallback: UAN + Establishment ID
+            existingIdx = state.epf.findIndex(e => e.uan === uan && (e.establishmentId === estId || e.memberId.includes(estId)) && !e.memberId);
+        } else if (uan && estName && estName !== 'EPF Account') {
+            // Weaker fallback: UAN + Establishment Name
+            // ONLY match if shares are also identical (likely a re-upload of the same file)
+            existingIdx = state.epf.findIndex(e => 
+                e.uan === uan && 
+                e.establishmentName === estName && 
+                !e.memberId && 
+                e.employeeShare === result.summary.employeeShare &&
+                e.employerShare === result.summary.employerShare
+            );
         }
 
         if (existingIdx > -1) {
@@ -962,6 +1010,7 @@
             state.epf[existingIdx].pensionShare = result.summary.pensionShare;
             state.epf[existingIdx].name = name;
             state.epf[existingIdx].establishmentName = estName;
+            if (estId) state.epf[existingIdx].establishmentId = estId;
             UI.toast('info', 'Account Updated', `Updated balances for ${name} at ${estName || 'EPF'}`);
         } else {
             // Add to state
@@ -969,6 +1018,7 @@
                 id: Date.now(),
                 uan: uan,
                 memberId: memberId,
+                establishmentId: estId,
                 name: name,
                 establishmentName: estName,
                 employeeShare: result.summary.employeeShare,

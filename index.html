@@ -281,9 +281,19 @@
 
       <!-- Header row -->
       <div class="table-header-row" style="margin-bottom:0">
-        <div>
-          <h2 style="font-size:22px;font-weight:700;margin:0">Indian Stocks</h2>
-          <p style="font-size:13px;color:var(--text3);margin:4px 0 0">Direct equity holdings via Zerodha</p>
+        <div style="display: flex; align-items: center; gap: 24px;">
+          <div>
+            <h2 style="font-size:22px;font-weight:700;margin:0">Indian Stocks</h2>
+            <p style="font-size:13px;color:var(--text3);margin:4px 0 0">Direct equity holdings via Zerodha</p>
+          </div>
+          <div class="nps-goal-pill" style="background: rgba(59,130,246,0.08); border-color: rgba(59,130,246,0.2)">
+            <div class="pill-label">
+              <span class="pill-emoji">🎯</span>
+              <span style="color: #3b82f6">Linked Goal</span>
+            </div>
+            <div class="pill-divider" style="background: rgba(59,130,246,0.2)"></div>
+            <input type="text" id="stocks-global-goal" class="pill-input" placeholder="e.g. Long Term Wealth" style="color: #60a5fa" />
+          </div>
         </div>
         <button class="btn btn-primary" id="stocks-in-add-btn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
@@ -743,6 +753,28 @@
       <!-- Tier tables -->
       <div id="nps-tiers-container"></div>
 
+      <!-- Transactions section -->
+      <div id="nps-txns-section" class="table-section" style="display:none; margin-top: 32px;">
+        <div class="table-header-row">
+          <h3 class="table-heading">Recent Transactions</h3>
+          <p style="font-size: 13px; color: var(--text3); margin: 0;">Contribution history extracted from statement</p>
+        </div>
+        <div class="table-wrap">
+          <table class="txn-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Narration</th>
+                <th>Asset Class</th>
+                <th style="text-align:right">Units</th>
+                <th style="text-align:right">Price</th>
+                <th style="text-align:right">Contribution</th>
+              </tr>
+            </thead>
+            <tbody id="nps-txns-tbody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -1043,7 +1075,7 @@
   <script src="js/analytics.js"></script>
   <script src="js/navfetch.js"></script>
   <script src="js/parser.js"></script>
-  <script src="js/nps-parser.js"></script>
+  <script src="js/nps-parser.js?v=6"></script>
   <script src="js/zerodha-parser.js"></script>
   <script src="js/barclays-parser.js"></script>
   <script src="js/epf-parser.js"></script>
