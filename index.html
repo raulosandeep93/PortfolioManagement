@@ -3,11 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FolioSense — Mutual Fund Portfolio Analyzer</title>
+  <title>FolioSense — Your Offline Financial Dashboard</title>
   <meta name="description" content="Upload your CAS statement and get instant mutual fund portfolio insights — XIRR, live NAV, holdings breakdown, and more. 100% private, runs in your browser." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -36,22 +35,9 @@
       <button class="screen-tab" data-screen="epf">EPF</button>
     </div>
     <div class="nav-actions">
-      <input type="file" id="nav-import-input" accept=".json" style="display:none" />
-      <button id="nav-export-btn" class="btn btn-ghost" style="display:none" title="Download a full backup of all your data (portfolios, goals, targets)">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-        Export Backup
-        <span class="backup-reminder-dot" id="export-reminder-dot"></span>
-      </button>
-      <button id="nav-import-btn" class="btn btn-ghost" style="display:none" title="Restore your data from a previous backup file">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 14l5-5 5 5M12 9v12"/></svg>
-        Import Backup
-      </button>
       <button id="nav-add-btn" class="btn btn-ghost" style="display:none">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
         Add Statement
-      </button>
-      <button id="nav-debug-btn" class="btn btn-ghost" style="display:none;font-size:12px">
-        🔍 Debug
       </button>
       <div id="nav-status" class="nav-status" style="display:none"></div>
     </div>
@@ -170,7 +156,7 @@
         <div id="drop-zone" class="drop-zone" role="button" tabindex="0">
           <input type="file" id="file-input" accept=".pdf" multiple hidden />
           <div class="drop-icon">
-            <svg viewBox="0 0 64 64" fill="none"><rect x="8" y="12" width="40" height="48" rx="4" fill="rgba(16,185,129,0.1)" stroke="rgba(16,185,129,0.4)" stroke-width="1.5"/><path d="M20 32 h16 M28 24 v16" stroke="#10b981" stroke-width="2" stroke-linecap="round"/><text x="14" y="52" font-family="Inter" font-size="7" fill="rgba(16,185,129,0.7)" font-weight="600">PDF</text></svg>
+            <svg viewBox="0 0 64 64" fill="none"><rect x="8" y="12" width="40" height="48" rx="4" fill="rgba(16,185,129,0.1)" stroke="rgba(16,185,129,0.4)" stroke-width="1.5"/><path d="M20 32 h16 M28 24 v16" stroke="#10b981" stroke-width="2" stroke-linecap="round"/><text x="14" y="52" font-family="Calibri" font-size="7" fill="rgba(16,185,129,0.7)" font-weight="600">PDF</text></svg>
           </div>
           <div class="drop-text">
             <span class="drop-primary">Drop your CAS PDF here</span>
@@ -265,7 +251,7 @@
         <div id="zerodha-drop-zone" class="drop-zone" role="button" tabindex="0" style="border-color: rgba(59,130,246,0.3); background: rgba(59,130,246,0.02)">
           <input type="file" id="zerodha-file-input" accept=".csv" hidden />
           <div class="drop-icon" style="background: rgba(59,130,246,0.1); border-color: rgba(59,130,246,0.2)">
-            <svg viewBox="0 0 64 64" fill="none"><rect x="8" y="12" width="40" height="48" rx="4" fill="rgba(59,130,246,0.1)" stroke="rgba(59,130,246,0.4)" stroke-width="1.5"/><path d="M20 32 h16 M28 24 v16" stroke="#3b82f6" stroke-width="2" stroke-linecap="round"/><text x="12" y="52" font-family="Inter" font-size="7" fill="rgba(59,130,246,0.7)" font-weight="600">CSV</text></svg>
+            <svg viewBox="0 0 64 64" fill="none"><rect x="8" y="12" width="40" height="48" rx="4" fill="rgba(59,130,246,0.1)" stroke="rgba(59,130,246,0.4)" stroke-width="1.5"/><path d="M20 32 h16 M28 24 v16" stroke="#3b82f6" stroke-width="2" stroke-linecap="round"/><text x="12" y="52" font-family="Calibri" font-size="7" fill="rgba(59,130,246,0.7)" font-weight="600">CSV</text></svg>
           </div>
           <div class="drop-text">
             <span class="drop-primary">Drop your Zerodha Holdings CSV</span>
@@ -697,7 +683,7 @@
         <div id="nps-drop-zone" class="drop-zone" role="button" tabindex="0">
           <input type="file" id="nps-file-input" accept=".pdf" multiple hidden />
           <div class="drop-icon">
-            <svg viewBox="0 0 64 64" fill="none"><rect x="8" y="12" width="40" height="48" rx="4" fill="rgba(99,102,241,0.1)" stroke="rgba(99,102,241,0.4)" stroke-width="1.5"/><path d="M20 32 h16 M28 24 v16" stroke="#6366f1" stroke-width="2" stroke-linecap="round"/><text x="14" y="52" font-family="Inter" font-size="7" fill="rgba(99,102,241,0.7)" font-weight="600">NPS</text></svg>
+            <svg viewBox="0 0 64 64" fill="none"><rect x="8" y="12" width="40" height="48" rx="4" fill="rgba(99,102,241,0.1)" stroke="rgba(99,102,241,0.4)" stroke-width="1.5"/><path d="M20 32 h16 M28 24 v16" stroke="#6366f1" stroke-width="2" stroke-linecap="round"/><text x="14" y="52" font-family="Calibri" font-size="7" fill="rgba(99,102,241,0.7)" font-weight="600">NPS</text></svg>
           </div>
           <div class="drop-text">
             <span class="drop-primary">Drop your NPS Statement PDF here</span>
@@ -778,25 +764,6 @@
     </div>
   </section>
 
-    <!-- Debug Panel -->
-    <div id="debug-section" style="display:none">
-      <div class="table-section" style="margin-top:0;border-radius:var(--radius)">
-        <div class="table-header-row">
-          <h2 class="table-heading" style="color:var(--gold)">🔍 Parse Diagnostics</h2>
-          <p style="font-size:13px;color:var(--text2)">Inspect what the parser extracted from your PDF. Share this with the developer if data looks wrong.</p>
-        </div>
-        <div style="padding:0 20px 20px;display:grid;grid-template-columns:1fr 1fr;gap:16px">
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Detected Schemes</div>
-            <pre id="debug-schemes" style="background:var(--bg2);border:1px solid var(--card-border);border-radius:8px;padding:12px;font-size:11px;color:var(--text2);overflow:auto;max-height:400px;line-height:1.7"></pre>
-          </div>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">First 80 Raw Lines (from PDF)</div>
-            <pre id="debug-lines" style="background:var(--bg2);border:1px solid var(--card-border);border-radius:8px;padding:12px;font-size:11px;color:var(--text2);overflow:auto;max-height:400px;line-height:1.7"></pre>
-          </div>
-        </div>
-      </div>
-    </div>
 
   <!-- ═══════════════════════════════════════════════ PASSWORD MODAL -->
   </section>
@@ -1067,6 +1034,23 @@
 
   <!-- ════════════════════════════════════════════════════ TOAST -->
   <div id="toast-container" class="toast-container"></div>
+
+  <div class="floating-actions">
+    <button id="theme-toggle-btn" class="btn btn-ghost" title="Toggle Theme" style="padding: 8px;">
+      <svg id="theme-icon-dark" style="display:none" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+      <svg id="theme-icon-light" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+    </button>
+    <input type="file" id="nav-import-input" accept=".json" style="display:none" />
+    <button id="nav-import-btn" class="btn btn-ghost" title="Restore your data from a previous backup file">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 14l5-5 5 5M12 9v12"/></svg>
+      Import Backup
+    </button>
+    <button id="nav-export-btn" class="btn btn-ghost" title="Download a full backup of all your data (portfolios, goals, targets)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+      Export Backup
+      <span class="backup-reminder-dot" id="export-reminder-dot"></span>
+    </button>
+  </div>
 
   <!-- Scripts (order matters) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>

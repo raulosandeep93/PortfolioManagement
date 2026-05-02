@@ -63,7 +63,13 @@
           (s.includes('DIRECT') ? 4 : 0) +
           (s.includes('GROWTH') ? 2 : 0) +
           (s.includes('REGULAR') ? -2 : 0);
-        return score(bS) - score(aS);
+        let sA = score(aS);
+        let sB = score(bS);
+        if (sA === sB) {
+          // If scores tie, prefer the one most similar in length
+          return Math.abs(aS.length - schemeName.length) - Math.abs(bS.length - schemeName.length);
+        }
+        return sB - sA;
       });
       searchCache[key] = String(sorted[0].schemeCode);
       return searchCache[key];

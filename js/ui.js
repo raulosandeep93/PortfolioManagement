@@ -577,15 +577,11 @@
       const expBtn = document.getElementById('nav-export-btn');
       const impBtn = document.getElementById('nav-import-btn');
       const navTabs = document.getElementById('nav-person-tabs');
-      const debug  = document.getElementById('nav-debug-btn');
 
       const showAdd = (id === 'mf' && hasMF) || (id === 'nps' && hasNPS) || (id === 'stocks-in' && hasStocks);
 
       if (addBtn) addBtn.style.display = showAdd ? '' : 'none';
-      if (expBtn) expBtn.style.display = (id === 'mf' || id === 'nps' || id === 'stocks-in' || (id === 'overview' && hasData)) ? '' : 'none';
-      if (impBtn) impBtn.style.display = (id === 'mf' || id === 'nps' || id === 'stocks-in' || (id === 'overview' && hasData)) ? '' : 'none';
       if (navTabs) navTabs.style.display = (id === 'mf' && hasMF) ? 'flex' : 'none';
-      if (debug)  debug.style.display  = ((id === 'mf' && hasMF) || (id === 'nps' && hasNPS)) ? '' : 'none';
 
       // 5. Refresh data if necessary
       if (id === 'overview' && hasData) {
@@ -1055,13 +1051,9 @@
 
   function renderNPSDashboard(npsPortfolios) {
     const tiersContainer = document.getElementById('nps-tiers-container');
-    const preSchemes = document.getElementById('debug-schemes');
-    const preLines = document.getElementById('debug-lines');
 
     if (!npsPortfolios || npsPortfolios.length === 0) {
       if (tiersContainer) tiersContainer.innerHTML = '';
-      if (preSchemes) preSchemes.textContent = 'No NPS data loaded.';
-      if (preLines) preLines.textContent = '';
       return;
     }
     

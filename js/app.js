@@ -468,6 +468,21 @@
       }
     });
 
+    setClick('theme-toggle-btn', () => {
+      const isLight = document.body.getAttribute('data-theme') === 'light';
+      if (isLight) {
+        document.body.removeAttribute('data-theme');
+        localStorage.setItem('foliosense_theme', 'dark');
+        document.getElementById('theme-icon-light').style.display = 'block';
+        document.getElementById('theme-icon-dark').style.display = 'none';
+      } else {
+        document.body.setAttribute('data-theme', 'light');
+        localStorage.setItem('foliosense_theme', 'light');
+        document.getElementById('theme-icon-light').style.display = 'none';
+        document.getElementById('theme-icon-dark').style.display = 'block';
+      }
+    });
+
     if (fileInput) {
       fileInput.onchange = (e) => { handleFiles(e.target.files); e.target.value = ''; };
     }
@@ -523,11 +538,7 @@
       npsFileInput.onchange = (e) => { handleNPSFiles(e.target.files); e.target.value = ''; };
     }
 
-    // Debug
-    setClick('nav-debug-btn', () => {
-      const ds = document.getElementById('debug-section');
-      if (ds) ds.style.display = ds.style.display === 'none' ? 'block' : 'none';
-    });
+
 
     // Barclays ESOPs
     setClick('btn-add-barclays-grant', () => {
@@ -1108,6 +1119,16 @@
 
   function init() {
     try {
+      // Theme setup
+      const savedTheme = localStorage.getItem('foliosense_theme') || 'dark';
+      if (savedTheme === 'light') {
+        document.body.setAttribute('data-theme', 'light');
+        const lightIcon = document.getElementById('theme-icon-light');
+        const darkIcon = document.getElementById('theme-icon-dark');
+        if (lightIcon) lightIcon.style.display = 'none';
+        if (darkIcon) darkIcon.style.display = 'block';
+      }
+
       loadState();
       cleanUpPortfolios();
       window.appState = state; // Shared with UI
