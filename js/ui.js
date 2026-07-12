@@ -87,6 +87,8 @@
     _storedGoals = map;
     if (global.appState) global.appState.goals = map;
     localStorage.setItem(GOALS_STORAGE_KEY, JSON.stringify(map));
+    // Keep the main state blob in sync so data survives reload
+    if (global._FolioSense?.saveState) global._FolioSense.saveState();
   }
 
   function getGoal(key) {
@@ -113,6 +115,8 @@
     _goalsMeta = meta;
     if (global.appState) global.appState.goalsMetadata = meta;
     localStorage.setItem(GOALS_META_KEY, JSON.stringify(meta));
+    // Keep the main state blob in sync so data survives reload
+    if (global._FolioSense?.saveState) global._FolioSense.saveState();
   }
 
   function exportFullBackup(appState) {

@@ -57,7 +57,9 @@
       localStorage.setItem('folio_foreign', JSON.stringify(state.foreignEquities));
       localStorage.setItem('folio_nsc', JSON.stringify(state.nsc));
       localStorage.setItem('folio_epf', JSON.stringify(state.epf));
-      localStorage.setItem('folio_goals_meta', JSON.stringify(state.goalsMetadata));
+      // Use the SAME keys as ui.js so goal edits are never lost
+      localStorage.setItem('foliosense_goals_meta', JSON.stringify(state.goalsMetadata));
+      localStorage.setItem('foliosense_goals', JSON.stringify(state.goals));
       localStorage.setItem('folio_fund_returns', JSON.stringify(state.fundReturnsMap));
     } catch (e) { console.warn('Failed to save state:', e); }
   }
@@ -1258,4 +1260,6 @@
   } else { init(); }
 
   global._FolioSense = state;
+  global._FolioSense.saveState = saveState;
+
 })(window);
