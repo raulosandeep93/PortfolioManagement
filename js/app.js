@@ -809,7 +809,7 @@
         };
     }
 
-    // Bank Savings Goal Delegation
+    // Bank Savings Goal + Balance Delegation
     const handleSavingsGoalChange = (e) => {
         if (e.target.classList.contains('savings-goal-input')) {
             const id = parseFloat(e.target.dataset.id);
@@ -824,6 +824,27 @@
                 saveState();
                 refreshDashboard();
                 UI.toast('info', 'Goal Updated', `Savings entry linked to "${newGoal || 'no goal'}".`);
+            }
+        }
+
+        if (e.target.classList.contains('savings-balance-input')) {
+            const id = parseFloat(e.target.dataset.id);
+            const newBalance = parseFloat(e.target.value) || 0;
+            const entry = state.savings.accounts.find(n => n.id === id);
+            if (entry) {
+                entry.balance = newBalance;
+                state.isDirtySinceExport = true;
+                saveState();
+                // Re-render only the summary totals without blowing away the focused input
+                const totalBank = state.savings.accounts.reduce((s, a) => s + (parseFloat(a.balance) || 0), 0);
+                const el = document.getElementById('savings-total-bank');
+                if (el) el.textContent = fmt(totalBank);
+                const lsEl = document.getElementById('ls-val-savings');
+                if (lsEl) {
+                    const totalFD = (state.savings.fds || []).reduce((s, f) => s + (parseFloat(f.principal) || 0), 0);
+                    const totalRD = (state.savings.rds || []).reduce((s, r) => s + (parseFloat(r.principal) || 0), 0);
+                    lsEl.textContent = fmt(totalBank + totalFD + totalRD);
+                }
             }
         }
     };

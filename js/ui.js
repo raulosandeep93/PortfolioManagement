@@ -1528,7 +1528,30 @@
             <td>
               <input type="text" class="savings-goal-input goal-input" data-id="${item.id}" data-type="accounts" value="${item.goal || ''}" placeholder="Link goal..." />
             </td>
-            <td style="text-align:right"><strong>${fmt(item.balance)}</strong></td>
+            <td style="text-align:right">
+              <input
+                type="number"
+                class="savings-balance-input"
+                data-id="${item.id}"
+                value="${item.balance || 0}"
+                step="1"
+                style="
+                  width: 120px;
+                  text-align: right;
+                  background: transparent;
+                  border: 1px solid transparent;
+                  border-radius: 6px;
+                  color: inherit;
+                  font-weight: 700;
+                  font-size: inherit;
+                  padding: 4px 6px;
+                  transition: border-color 0.15s;
+                  outline: none;
+                "
+                onfocus="this.style.borderColor='var(--green)'; this.style.background='var(--card)'"
+                onblur="this.style.borderColor='transparent'; this.style.background='transparent'"
+              />
+            </td>
             <td style="text-align:right"><button class="btn btn-ghost" style="padding:4px" onclick="UI.deleteSavings('accounts', ${idx})">🗑️</button></td>
           `;
         } else {
