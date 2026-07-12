@@ -719,6 +719,21 @@
         </tr>`;
       }).join('');
     }
+
+    const stmtTbody = document.getElementById('stocks-statements-tbody');
+    if (stmtTbody) {
+      stmtTbody.innerHTML = stocksPortfolios.map((p, idx) => {
+        return `<tr>
+          <td><div class="td-fund-name">${p._filename || 'unnamed.csv'}</div></td>
+          <td>${p.broker || 'Zerodha'}</td>
+          <td style="text-align:right">${fmt(p._summary?.totalInvested || 0)}</td>
+          <td style="text-align:right"><strong>${fmt(p._summary?.totalCurrentValue || 0)}</strong></td>
+          <td style="text-align:right">
+            <button class="btn btn-ghost btn-delete-stocks-portfolio" data-idx="${idx}" style="padding:4px" title="Delete">🗑️</button>
+          </td>
+        </tr>`;
+      }).join('');
+    }
   }
 
   /* ═══════════════════════════════════════════════ LANDING PAGE */

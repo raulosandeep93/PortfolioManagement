@@ -26,6 +26,15 @@
 
   const STORAGE_KEY_STATE = 'foliosense_state';
 
+  function normalizeFilename(filename) {
+    if (!filename) return '';
+    let base = filename.replace(/\.csv$/i, '');
+    base = base.replace(/\s*\(\d+\)$/i, '');
+    base = base.replace(/\s*-\s*copy$/i, '');
+    base = base.replace(/[_-]\d+$/i, '');
+    return base.trim().toLowerCase();
+  }
+
   function saveState() {
     try {
       const data = {
@@ -97,7 +106,17 @@
 
       state.portfolios = parsed.portfolios || [];
       state.npsPortfolios = parsed.npsPortfolios || [];
-      state.stocksPortfolios = parsed.stocksPortfolios || [];
+      state.stocksPortfolios = (() => {
+        const raw = parsed.stocksPortfolios || [];
+        const seen = new Set();
+        return raw.filter(p => {
+          const key = normalizeFilename(p._filename) || p.pan || '';
+          if (!key) return true; // keep if no key
+          if (seen.has(key)) return false; // drop duplicate
+          seen.add(key);
+          return true;
+        });
+      })();
       state.liveNavMap = parsed.liveNavMap || {};
       
       state.savings = load('savings', 'folio_savings', { accounts: [], fds: [], rds: [] });
@@ -393,7 +412,7 @@
 
     // De-duplicate based on filename + broker
     newPortfolios.forEach(newP => {
-      const idx = state.stocksPortfolios.findIndex(p => p._filename === newP._filename && p.broker === newP.broker);
+      const idx = state.stocksPortfolios.findIndex(p => normalizeFilename(p._filename) === normalizeFilename(newP._filename) && p.broker === newP.broker);
       if (idx !== -1) {
         state.stocksPortfolios[idx] = newP;
       } else {
@@ -750,6 +769,17 @@
                 UI.toast('info', 'NSC Deleted', 'Certificate removed.');
             }
         }
+
+        const delStockBtn = e.target.closest('.btn-delete-stocks-portfolio');
+        if (delStockBtn) {
+            const idx = parseInt(delStockBtn.dataset.idx);
+            if (confirm('Are you sure you want to remove this stocks portfolio statement?')) {
+                state.stocksPortfolios.splice(idx, 1);
+                saveState();
+                refreshDashboard();
+                UI.toast('info', 'Portfolio Removed', 'Stocks statement removed.');
+            }
+        }
     });
 
     const nscTable = document.getElementById('nsc-tbody');
@@ -1099,7 +1129,7 @@
       });
     });
     if (state.stocksPortfolios) {
-      state.stocksPortfolios = dedupe(state.stocksPortfolios, p => p.filename || p.pan);
+      state.stocksPortfolios = dedupe(state.stocksPortfolios, p => normalizeFilename(p._filename) || p.pan);
     }
     
     // ── Barclays ESOPs ──────────────────────────────────────────────
