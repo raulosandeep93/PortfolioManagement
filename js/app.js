@@ -26,13 +26,15 @@
 
   const STORAGE_KEY_STATE = 'foliosense_state';
 
-  function normalizeFilename(filename) {
-    if (!filename) return '';
-    let base = filename.replace(/\.csv$/i, '');
-    base = base.replace(/\s*\(\d+\)$/i, '');
-    base = base.replace(/\s*-\s*copy$/i, '');
-    base = base.replace(/[_-]\d+$/i, '');
-    return base.trim().toLowerCase();
+  // Fingerprint a holdings portfolio by its actual content (sorted instruments+qty).
+  // Two files with the same stocks & quantities = same fingerprint (true duplicate).
+  // Two different people's files named the same = different fingerprint (kept separate).
+  function holdingsFingerprint(portfolio) {
+    if (!portfolio || !Array.isArray(portfolio.holdings) || portfolio.holdings.length === 0) return '';
+    return portfolio.holdings
+      .map(h => `${(h.instrument || '').trim().toUpperCase()}:${h.qty}:${h.avgCost}`)
+      .sort()
+      .join('|');
   }
 
   function saveState() {
@@ -110,9 +112,9 @@
         const raw = parsed.stocksPortfolios || [];
         const seen = new Set();
         return raw.filter(p => {
-          const key = normalizeFilename(p._filename) || p.pan || '';
-          if (!key) return true; // keep if no key
-          if (seen.has(key)) return false; // drop duplicate
+          const key = holdingsFingerprint(p);
+          if (!key) return true;          // keep if no content to fingerprint
+          if (seen.has(key)) return false; // exact duplicate — drop
           seen.add(key);
           return true;
         });
@@ -410,13 +412,18 @@
     UI.hideLoading();
     if (newPortfolios.length === 0) return;
 
-    // De-duplicate based on filename + broker
+    // De-duplicate based on holdings content (fingerprint), not filename.
+    // This lets two different people's files named the same coexist,
+    // while a true re-upload of the identical file replaces the old entry.
     newPortfolios.forEach(newP => {
-      const idx = state.stocksPortfolios.findIndex(p => normalizeFilename(p._filename) === normalizeFilename(newP._filename) && p.broker === newP.broker);
+      const fp = holdingsFingerprint(newP);
+      const idx = fp
+        ? state.stocksPortfolios.findIndex(p => holdingsFingerprint(p) === fp)
+        : -1;
       if (idx !== -1) {
-        state.stocksPortfolios[idx] = newP;
+        state.stocksPortfolios[idx] = newP; // replace exact duplicate
       } else {
-        state.stocksPortfolios.push(newP);
+        state.stocksPortfolios.push(newP);  // new distinct portfolio
       }
     });
 
@@ -1129,7 +1136,7 @@
       });
     });
     if (state.stocksPortfolios) {
-      state.stocksPortfolios = dedupe(state.stocksPortfolios, p => normalizeFilename(p._filename) || p.pan);
+      state.stocksPortfolios = dedupe(state.stocksPortfolios, p => holdingsFingerprint(p) || p.pan);
     }
     
     // ── Barclays ESOPs ──────────────────────────────────────────────
