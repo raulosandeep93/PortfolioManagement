@@ -4,6 +4,24 @@ All notable developments and architectural milestones for FolioSense.
 
 ---
 
+## 2026-11-12
+
+### Added
+- Goal deletion functionality on the Goals screen (`UI.deleteGoal` in `js/ui.js`):
+  - Added delete option (`🗑️`) to each Goal card header.
+  - Confirmation prompt before deletion.
+  - Cascading unlinking across all tagged asset classes (MFs, NPS, Stocks, Bank Savings, Barclays Foreign Equities, NSC, EPF).
+  - Clean state persistence to `localStorage` and dirty state indicator for backups.
+  - Immediate responsive UI refresh including fallback to empty state when all goals are removed.
+- Enhanced `UI.openGoalManager` to trigger immediate goal dashboard re-render when a new goal is added.
+- **Goal data now persists correctly across page reloads**:
+  - Rewrote `getGoalsMeta()` and `getGoalsMap()` in `js/ui.js` to always merge `localStorage` data with in-memory `appState` — prevents any source overwriting the other.
+  - Added `mergeGoalsMetadata()` helper: when both storage sources exist, the entry with a real `targetAmount > 0` wins, preventing blank defaults from overwriting user-entered values.
+  - Rewrote `loadGoalsMetadata()` and `loadGoalsMap()` in `js/app.js` using the same smart-merge logic during boot — covers the edge case where `foliosense_state` blob was written before goal details were filled in.
+  - `saveGoal()` now auto-registers a `goalsMetadata` stub for newly typed goal names, ensuring the entry is always present so details typed later are never orphaned.
+  - Goal card input fields now also trigger `saveGoalMeta` on `input` and `change` events (not only `blur`) and recalculate card projections live without requiring a full re-render.
+  - Added `beforeunload` flush handler in `js/ui.js` to persist any in-flight goal field edits if the user refreshes mid-typing.
+
 ## 2026-10-26
 
 ### Added

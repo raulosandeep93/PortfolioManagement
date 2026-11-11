@@ -127,8 +127,64 @@
       state.foreignEquities = load('foreignEquities', 'folio_foreign', { barclays: { grants: [] } });
       state.nsc = load('nsc', 'folio_nsc', []);
       state.epf = load('epf', 'folio_epf', []);
-      state.goalsMetadata = load('goalsMetadata', 'foliosense_goals_meta', {});
-      state.goals = load('goals', 'foliosense_goals', {});
+
+      // Robust goal metadata merge: preserves custom values (targetAmount > 0)
+      const loadGoalsMetadata = () => {
+        let fromMain = {};
+        let fromLegacy = {};
+        if (parsed.goalsMetadata && typeof parsed.goalsMetadata === 'object' && !Array.isArray(parsed.goalsMetadata)) {
+          fromMain = parsed.goalsMetadata;
+        }
+        try {
+          const raw = localStorage.getItem('foliosense_goals_meta');
+          if (raw) {
+            const parsedL = JSON.parse(raw, reviver);
+            if (parsedL && typeof parsedL === 'object' && !Array.isArray(parsedL)) {
+              fromLegacy = parsedL;
+            }
+          }
+        } catch(e) {}
+
+        const merged = {};
+        const allKeys = new Set([...Object.keys(fromMain), ...Object.keys(fromLegacy)]);
+        for (const k of allKeys) {
+          const mA = fromMain[k];
+          const mB = fromLegacy[k];
+          if (!mA) { merged[k] = mB; continue; }
+          if (!mB) { merged[k] = mA; continue; }
+          const aHasTarget = (mA.targetAmount && mA.targetAmount > 0);
+          const bHasTarget = (mB.targetAmount && mB.targetAmount > 0);
+          if (bHasTarget && !aHasTarget) {
+            merged[k] = Object.assign({}, mA, mB);
+          } else if (aHasTarget && !bHasTarget) {
+            merged[k] = Object.assign({}, mB, mA);
+          } else {
+            merged[k] = Object.assign({}, mA, mB);
+          }
+        }
+        return merged;
+      };
+
+      const loadGoalsMap = () => {
+        let fromMain = {};
+        let fromLegacy = {};
+        if (parsed.goals && typeof parsed.goals === 'object' && !Array.isArray(parsed.goals)) {
+          fromMain = parsed.goals;
+        }
+        try {
+          const raw = localStorage.getItem('foliosense_goals');
+          if (raw) {
+            const parsedL = JSON.parse(raw, reviver);
+            if (parsedL && typeof parsedL === 'object' && !Array.isArray(parsedL)) {
+              fromLegacy = parsedL;
+            }
+          }
+        } catch(e) {}
+        return Object.assign({}, fromLegacy, fromMain);
+      };
+
+      state.goalsMetadata = loadGoalsMetadata();
+      state.goals = loadGoalsMap();
       state.fundReturnsMap = load('fundReturnsMap', 'folio_fund_returns', {});
 
       return !!saved;

@@ -1,7 +1,7 @@
 # Current State — FolioSense
 
 ## Last Updated
-2026-10-26
+2026-11-12
 
 ---
 
@@ -11,6 +11,9 @@ FolioSense is fully functional as a client-side multi-asset personal finance tra
 ---
 
 ## Recently Completed
+- **Goal Persistence across page reloads**: Rewrote goal storage layer (`getGoalsMeta`, `getGoalsMap`, `saveGoal`, `loadGoalsMetadata`, `loadGoalsMap`) with smart-merge logic so that user-entered target amounts, years, return rates, and inflation rates survive page reloads and are never overwritten by blank placeholder defaults. Added `beforeunload` flush for in-flight edits.
+- **Goal card live recalculation**: Target/Years/Return/Inflation inputs now recalculate projections (adjusted target, SIP need, progress bar, status badge) live on `input`/`change` without requiring a full re-render.
+- **Goal Deletion**: Added a delete option (`🗑️`) on each Goal card in the Goals screen, with confirmation, cascading unlinking of all tagged assets across all modules, state persistence, datalist refresh, and empty-state fallback.
 - **Goals Section Logic**: Goal metadata tracking (`targetAmount`, `targetDate`), linking assets/schemes to goals, and visual progress calculation (`app.js`, `ui.js`).
 - **Bank Savings & Deposits**: Full support for savings accounts, Fixed Deposits, and Recurring Deposits with maturity calculations.
 - **Stock Deduplication**: Added content-based fingerprinting (`holdingsFingerprint()`) to prevent duplicate imports of identical stock portfolios while allowing distinct family members with identical holdings.

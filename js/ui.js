@@ -66,15 +66,39 @@
   const GOALS_STORAGE_KEY = 'foliosense_goals';
   let _storedGoals = null;
 
-  function getGoalsMap() {
-    if (global.appState?.goals) return global.appState.goals;
-    if (_storedGoals) return _storedGoals;
-    try {
-      _storedGoals = JSON.parse(localStorage.getItem(GOALS_STORAGE_KEY)) || {};
-    } catch {
-      _storedGoals = {};
+  function mergeGoalsMetadata(a = {}, b = {}) {
+    const merged = {};
+    const allKeys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+    for (const k of allKeys) {
+      const mA = a ? a[k] : null;
+      const mB = b ? b[k] : null;
+      if (!mA) { merged[k] = mB; continue; }
+      if (!mB) { merged[k] = mA; continue; }
+      const aHasTarget = (mA.targetAmount && mA.targetAmount > 0);
+      const bHasTarget = (mB.targetAmount && mB.targetAmount > 0);
+      if (bHasTarget && !aHasTarget) {
+        merged[k] = Object.assign({}, mA, mB);
+      } else if (aHasTarget && !bHasTarget) {
+        merged[k] = Object.assign({}, mB, mA);
+      } else {
+        merged[k] = Object.assign({}, mA, mB);
+      }
     }
-    return _storedGoals;
+    return merged;
+  }
+
+  function getGoalsMap() {
+    let localGoals = {};
+    try {
+      localGoals = JSON.parse(localStorage.getItem(GOALS_STORAGE_KEY)) || {};
+    } catch {
+      localGoals = {};
+    }
+    const appGoals = global.appState?.goals || _storedGoals || {};
+    const merged = Object.assign({}, localGoals, appGoals);
+    _storedGoals = merged;
+    if (global.appState) global.appState.goals = merged;
+    return merged;
   }
 
   function saveGoal(key, val) {
@@ -82,7 +106,14 @@
     if (!val || !val.trim()) {
       delete map[key];
     } else {
-      map[key] = val.trim();
+      const gName = val.trim();
+      map[key] = gName;
+      // Auto-ensure goalsMetadata entry exists so details are never lost
+      const meta = getGoalsMeta();
+      if (!meta[gName]) {
+        meta[gName] = { targetAmount: 0, yearsToGoal: 10, expectedReturn: 12, inflation: 7 };
+        saveGoalMeta(gName, meta[gName]);
+      }
     }
     _storedGoals = map;
     if (global.appState) global.appState.goals = map;
@@ -99,14 +130,17 @@
   let _goalsMeta = null;
 
   function getGoalsMeta() {
-    if (global.appState?.goalsMetadata) return global.appState.goalsMetadata;
-    if (_goalsMeta) return _goalsMeta;
+    let localMeta = {};
     try {
-      _goalsMeta = JSON.parse(localStorage.getItem(GOALS_META_KEY)) || {};
+      localMeta = JSON.parse(localStorage.getItem(GOALS_META_KEY)) || {};
     } catch {
-      _goalsMeta = {};
+      localMeta = {};
     }
-    return _goalsMeta;
+    const appMeta = global.appState?.goalsMetadata || _goalsMeta || {};
+    const merged = mergeGoalsMetadata(localMeta, appMeta);
+    _goalsMeta = merged;
+    if (global.appState) global.appState.goalsMetadata = merged;
+    return merged;
   }
 
   function saveGoalMeta(goalName, data) {
@@ -117,6 +151,105 @@
     localStorage.setItem(GOALS_META_KEY, JSON.stringify(meta));
     // Keep the main state blob in sync so data survives reload
     if (global._FolioSense?.saveState) global._FolioSense.saveState();
+  }
+
+  function deleteGoal(goalName) {
+    if (!goalName) return;
+    const confirmed = confirm(`Are you sure you want to delete the goal "${goalName}"?\n\nThis will remove the goal and unlink all tagged investments.`);
+    if (!confirmed) return;
+
+    // 1. Remove from goalsMetadata
+    const goalsMeta = getGoalsMeta();
+    if (goalsMeta && goalsMeta[goalName]) {
+      delete goalsMeta[goalName];
+      _goalsMeta = goalsMeta;
+      if (global.appState) global.appState.goalsMetadata = goalsMeta;
+      localStorage.setItem(GOALS_META_KEY, JSON.stringify(goalsMeta));
+    }
+
+    // 2. Remove from goals map (MF schemes, global goals, etc.)
+    const goalsMap = getGoalsMap();
+    let mapChanged = false;
+    Object.keys(goalsMap).forEach(key => {
+      if (goalsMap[key] === goalName) {
+        delete goalsMap[key];
+        mapChanged = true;
+      }
+    });
+    if (mapChanged) {
+      _storedGoals = goalsMap;
+      if (global.appState) global.appState.goals = goalsMap;
+      localStorage.setItem(GOALS_STORAGE_KEY, JSON.stringify(goalsMap));
+    }
+
+    // 3. Unlink cached in-memory rows
+    if (Array.isArray(_allRows)) {
+      _allRows.forEach(r => {
+        if (r.goal === goalName) r.goal = '';
+      });
+    }
+
+    // 4. Unlink Bank Savings
+    const savings = global.appState?.savings;
+    if (savings) {
+      ['accounts', 'fds', 'rds'].forEach(cat => {
+        (savings[cat] || []).forEach(item => {
+          if (item.goal === goalName) item.goal = '';
+        });
+      });
+      localStorage.setItem('folio_savings', JSON.stringify(savings));
+    }
+
+    // 5. Unlink Foreign Equities (Barclays)
+    if (global.appState?.foreignEquities?.barclays?.goal === goalName) {
+      global.appState.foreignEquities.barclays.goal = '';
+      localStorage.setItem('folio_foreign', JSON.stringify(global.appState.foreignEquities));
+    }
+
+    // 6. Unlink NSC
+    if (Array.isArray(global.appState?.nsc)) {
+      global.appState.nsc.forEach(item => {
+        if (item.goal === goalName) item.goal = '';
+      });
+      localStorage.setItem('folio_nsc', JSON.stringify(global.appState.nsc));
+    }
+
+    // 7. Unlink EPF
+    if (Array.isArray(global.appState?.epf)) {
+      global.appState.epf.forEach(item => {
+        if (item.goal === goalName) item.goal = '';
+      });
+      localStorage.setItem('folio_epf', JSON.stringify(global.appState.epf));
+    }
+
+    // 8. Clear on-screen input elements if they hold this goal
+    const stockGoalEl = document.getElementById('stocks-global-goal');
+    if (stockGoalEl && stockGoalEl.value === goalName) stockGoalEl.value = '';
+    const npsGoalEl = document.getElementById('nps-global-goal');
+    if (npsGoalEl && npsGoalEl.value === goalName) npsGoalEl.value = '';
+    const barcGoalEl = document.getElementById('barclays-goal-input');
+    if (barcGoalEl && barcGoalEl.value === goalName) barcGoalEl.value = '';
+
+    // 9. Update suggestion datalists across the app
+    ['barclays-goals-list', 'nsc-goals-list', 'epf-goals-list'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        const goalNames = Object.keys(getGoalsMeta());
+        el.innerHTML = goalNames.map(n => `<option value="${n}">`).join('');
+      }
+    });
+
+    // 10. Mark dirty and save state
+    if (global.appState) global.appState.isDirtySinceExport = true;
+    if (global._FolioSense?.saveState) global._FolioSense.saveState();
+
+    toast('info', 'Goal Deleted', `Goal "${goalName}" removed.`);
+
+    // 11. Refresh dashboard views & goals screen
+    if (global.refreshDashboard) {
+      global.refreshDashboard();
+    }
+    renderGoalsDashboard(global.appState?.portfolios || [], global.appState?.npsPortfolios || []);
   }
 
   function exportFullBackup(appState) {
@@ -1002,10 +1135,13 @@
             <h4 class="og-name">${name}</h4>
             <div class="og-target-wrap"><span class="og-label">Inflation-Adj. Target</span><span class="og-adj-target">${fmt(adjTarget)}</span></div>
           </div>
-          <div class="og-status-wrap">${statusLabel}</div>
+          <div class="og-header-actions">
+            <div class="og-status-wrap">${statusLabel}</div>
+            <button class="btn-delete-goal" title="Delete Goal" aria-label="Delete Goal">🗑️</button>
+          </div>
         </div>
         <div class="og-progress-section">
-          <div class="og-progress-labels"><span>Progress to Goal</span><span>${progressPct.toFixed(1)}%</span></div>
+          <div class="og-progress-labels"><span>Progress to Goal</span><span class="og-progress-pct">${progressPct.toFixed(1)}%</span></div>
           <div class="og-bar-bg"><div class="og-bar-fill" style="width:${progressPct}%"></div></div>
         </div>
         <div class="og-details-grid">
@@ -1015,21 +1151,103 @@
           <div class="og-detail"><span class="og-label">Expected Return</span><div class="og-input-wrap"><input type="text" class="goal-meta-input semibold" data-goal="${name}" data-field="expectedReturn" value="${expectedReturn}" /> %</div></div>
           <div class="og-detail"><span class="og-label">Inflation Rate</span><div class="og-input-wrap"><input type="text" class="goal-meta-input semibold" data-goal="${name}" data-field="inflation" value="${inflation}" /> %</div></div>
         </div>
-        ${sipBlock}
+        <div class="og-sip-container">${sipBlock}</div>
       `;
+
+      const deleteBtn = card.querySelector('.btn-delete-goal');
+      if (deleteBtn) {
+        deleteBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          deleteGoal(name);
+        });
+      }
+
       grid.appendChild(card);
     });
     containerEl.appendChild(grid);
 
+    function updateCardCalculations(cardEl, goalName) {
+      const meta = getGoalsMeta()[goalName] || { targetAmount: 0, yearsToGoal: 10, expectedReturn: 12, inflation: 7 };
+      const cur = goalValues[goalName] || 0;
+      const tgt = meta.targetAmount || 0;
+      const yrs = meta.yearsToGoal || 10;
+      const exp = meta.expectedReturn || 12;
+      const inf = (meta.inflation != null ? meta.inflation : 7);
+      const curSIP = goalSIPs[goalName] || 0;
+
+      const adjTgt = Analytics.computeFutureValue(tgt, inf / 100, yrs);
+      const totSIP = Analytics.computeMonthlySIP(adjTgt, cur, exp / 100, yrs);
+      const addSIP = Math.max(0, totSIP - curSIP);
+      const fvCur = Analytics.computeFutureValue(cur, exp / 100, yrs);
+      const ahead = (fvCur >= adjTgt);
+      const sipCovered = curSIP > 0 && curSIP >= totSIP;
+      const pct = adjTgt > 0 ? Math.min(100, (cur / adjTgt) * 100) : 0;
+
+      let statusHtml;
+      if (ahead || sipCovered) {
+        statusHtml = '<span class="status-badge ahead">✅ On Track</span>';
+      } else if (totSIP > 0) {
+        statusHtml = `<span class="status-badge lagging">SIP Needed: ${fmt(totSIP)}/mo</span>`;
+      } else {
+        statusHtml = '<span class="status-badge ahead">✅ On Track</span>';
+      }
+
+      const adjEl = cardEl.querySelector('.og-adj-target');
+      if (adjEl) adjEl.textContent = fmt(adjTgt);
+
+      const statusEl = cardEl.querySelector('.og-status-wrap');
+      if (statusEl) statusEl.innerHTML = statusHtml;
+
+      const pctEl = cardEl.querySelector('.og-progress-pct');
+      if (pctEl) pctEl.textContent = pct.toFixed(1) + '%';
+
+      const barEl = cardEl.querySelector('.og-bar-fill');
+      if (barEl) barEl.style.width = pct + '%';
+
+      let newSipHtml = '';
+      if (curSIP > 0) {
+        if (sipCovered || ahead) {
+          newSipHtml = `
+            <div class="og-sip-block og-sip-ok">
+              <div class="og-sip-row"><span class="og-label">Current MF SIP</span><span class="og-sip-val positive">${fmt(curSIP)}<small>/mo</small></span></div>
+              <div class="og-sip-suggestion ok">✅ Your current SIP is sufficient for this goal.</div>
+            </div>`;
+        } else {
+          newSipHtml = `
+            <div class="og-sip-block og-sip-gap">
+              <div class="og-sip-row"><span class="og-label">Current MF SIP</span><span class="og-sip-val">${fmt(curSIP)}<small>/mo</small></span></div>
+              <div class="og-sip-row"><span class="og-label">Total SIP Needed</span><span class="og-sip-val">${fmt(totSIP)}<small>/mo</small></span></div>
+              <div class="og-sip-suggestion gap">⚡ Increase SIP by <strong>${fmt(addSIP)}/mo</strong> to stay on track.</div>
+            </div>`;
+        }
+      } else if (totSIP > 0 && !ahead) {
+        newSipHtml = `
+          <div class="og-sip-block og-sip-gap">
+            <div class="og-sip-suggestion gap">⚡ Start a SIP of <strong>${fmt(totSIP)}/mo</strong> to reach this goal.</div>
+          </div>`;
+      }
+      const sipContainer = cardEl.querySelector('.og-sip-container');
+      if (sipContainer) sipContainer.innerHTML = newSipHtml;
+    }
+
     containerEl.querySelectorAll('.goal-meta-input').forEach(input => {
-      input.addEventListener('blur', (e) => {
+      const handleInput = (e) => {
         const { goal, field } = e.target.dataset;
+        if (!goal || !field) return;
         const val = parseFloat(e.target.value.replace(/,/g, '')) || 0;
         const meta = getGoalsMeta();
         const existing = meta[goal] || { targetAmount: 0, yearsToGoal: 10, expectedReturn: 12, inflation: 7 };
         existing[field] = val;
         saveGoalMeta(goal, existing);
-        if (onMetaChange) onMetaChange();
+        const cardEl = e.target.closest('.ov-goal-card');
+        if (cardEl) updateCardCalculations(cardEl, goal);
+      };
+
+      input.addEventListener('input', handleInput);
+      input.addEventListener('change', handleInput);
+      input.addEventListener('blur', (e) => {
+        handleInput(e);
+        if (global.appState) renderLandingPage(global.appState);
       });
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
     });
@@ -1648,10 +1866,24 @@
     if (!name || !name.trim()) return;
     const gName = name.trim();
     const goalsMeta = getGoalsMeta();
-    if (!goalsMeta[gName]) saveGoalMeta(gName, { targetAmount: 0, yearsToGoal: 10, expectedReturn: 12 });
+    if (!goalsMeta[gName]) saveGoalMeta(gName, { targetAmount: 0, yearsToGoal: 10, expectedReturn: 12, inflation: 7 });
     renderLandingPage(global.appState);
+    renderGoalsDashboard(global.appState?.portfolios || [], global.appState?.npsPortfolios || []);
     if (onSave) onSave();
   }
+
+  // Ensure any input being actively typed into is flushed to storage on tab unload/refresh
+  window.addEventListener('beforeunload', () => {
+    document.querySelectorAll('.goal-meta-input').forEach(input => {
+      const { goal, field } = input.dataset;
+      if (!goal || !field) return;
+      const val = parseFloat(input.value.replace(/,/g, '')) || 0;
+      const meta = getGoalsMeta();
+      const existing = meta[goal] || { targetAmount: 0, yearsToGoal: 10, expectedReturn: 12, inflation: 7 };
+      existing[field] = val;
+      saveGoalMeta(goal, existing);
+    });
+  });
 
   function updateBackupReminder(isVisible) {
     const dot = document.getElementById('export-reminder-dot');
@@ -1663,7 +1895,7 @@
     toast, showLoading, setLoading, hideLoading,
     renderSummaryCards, renderPersonTabs, renderCharts, renderTable, renderTableBody, initMutualFundUI,
     openTransactionPanel, closeTransactionPanel, setScreen, updateMFViewState,
-    renderLandingPage, renderGoalsDashboard, openGoalManager, buildRows, personColor, exportFullBackup, importFullData, updateBackupReminder,
+    renderLandingPage, renderGoalsDashboard, openGoalManager, deleteGoal, buildRows, personColor, exportFullBackup, importFullData, updateBackupReminder,
     updateNPSViewState, renderNPSDashboard,
     renderNSCDashboard,
     renderStocksDashboard, updateStocksViewState,

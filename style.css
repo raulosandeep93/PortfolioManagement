@@ -1204,7 +1204,30 @@ table { border-collapse: collapse; width: 100%; }
 }
 .ov-goal-card:hover { transform: translateY(-8px); border-color: var(--green); box-shadow: var(--shadow-lg); }
 
-.og-card-header { display: flex; justify-content: space-between; align-items: flex-start; }
+.og-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.og-header-actions { display: flex; align-items: center; gap: 10px; }
+.btn-delete-goal {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text3);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+  opacity: 0.6;
+  line-height: 1;
+}
+.btn-delete-goal:hover {
+  opacity: 1;
+  color: var(--red);
+  background: var(--red-dim);
+  border-color: rgba(239, 68, 68, 0.25);
+  transform: scale(1.08);
+}
 .og-name { font-size: 22px; font-weight: 800; color: var(--text); letter-spacing: -0.02em; margin: 0; }
 .og-adj-target { font-size: 28px; font-weight: 800; color: var(--green); line-height: 1.1; display: block; }
 
