@@ -32,10 +32,65 @@
     return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
-  /* ══════════════════════════════════════════ PERSON COLORS */
-  const PERSON_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#ec4899', '#14b8a6'];
+  /* ══════════════════════════════════════════ PERSON COLORS & ALL PERSONS */
+  const PERSON_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#ec4899', '#14b8a6', '#06b6d4', '#eab308'];
 
   function personColor(idx) { return PERSON_COLORS[idx % PERSON_COLORS.length]; }
+
+  function personColorByName(name) {
+    if (!name) return '#64748b';
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) hash = ((hash << 5) - hash) + name.charCodeAt(i);
+    return PERSON_COLORS[Math.abs(hash) % PERSON_COLORS.length];
+  }
+
+  function getAllPersonNames(state) {
+    if (!state) return [];
+    const names = new Set();
+    // 1. MF — manual holder only
+    (state.portfolios || []).forEach(p => {
+      const n = (p.holder || '').trim();
+      if (n) names.add(n);
+    });
+    // 2. NPS — manual holder only
+    (state.npsPortfolios || []).forEach(p => {
+      const n = (p.holder || '').trim();
+      if (n) names.add(n);
+    });
+    // 3. Indian Stocks
+    (state.stocksPortfolios || []).forEach(p => {
+      const n = (p.holder || '').trim();
+      if (n) names.add(n);
+      (p.holdings || []).forEach(h => {
+        if (h.holder && h.holder.trim()) names.add(h.holder.trim());
+      });
+    });
+    // 4. Savings
+    const savings = state.savings || {};
+    ['accounts', 'fds', 'rds'].forEach(k => {
+      (savings[k] || []).forEach(item => {
+        if (item.holder && item.holder.trim()) names.add(item.holder.trim());
+      });
+    });
+    // 5. Barclays Foreign
+    const foreign = state.foreignEquities?.barclays;
+    if (foreign) {
+      if (foreign.holder && foreign.holder.trim()) names.add(foreign.holder.trim());
+      (foreign.grants || []).forEach(g => {
+        if (g.holder && g.holder.trim()) names.add(g.holder.trim());
+      });
+    }
+    // 6. NSC
+    (state.nsc || []).forEach(item => {
+      if (item.holder && item.holder.trim()) names.add(item.holder.trim());
+    });
+    // 7. EPF
+    (state.epf || []).forEach(item => {
+      const n = (item.holder || item.name || '').trim();
+      if (n) names.add(n);
+    });
+    return Array.from(names);
+  }
 
   /* ══════════════════════════════════════════ TOAST */
   function toast(type, title, msg, durationMs = 4000) {
@@ -253,12 +308,18 @@
   }
 
   function exportFullBackup(appState) {
+    const currentState = appState || global.appState || {};
+    const personsList = getAllPersonNames(currentState);
     const data = {
       type: 'foliosense_full_backup',
-      version: '1.0',
+      version: '1.1',
       timestamp: new Date().toISOString(),
+      metadata: {
+        persons: personsList,
+        totalAssets: Object.keys(currentState).length
+      },
       payload: {
-        state: appState || {},
+        state: currentState,
         goals: getGoalsMap(),
         goalsMeta: getGoalsMeta()
       }
@@ -271,7 +332,7 @@
     document.body.appendChild(dlAnchorElem);
     dlAnchorElem.click();
     dlAnchorElem.remove();
-    toast('success', 'Backup Exported', 'Full backup has been downloaded successfully.');
+    toast('success', 'Backup Exported', 'Full backup with all segregated holdings has been downloaded.');
   }
 
   function importFullData(jsonString, onComplete) {
@@ -327,23 +388,48 @@
   }
 
   /* ══════════════════════════════════════════ PERSON TABS */
-  function renderPersonTabs(portfolios, activeName) {
+  function renderPersonTabs(stateOrPortfolios, activeName) {
     const container = document.getElementById('nav-person-tabs');
+    const personBar = document.getElementById('person-bar');
     const filterSel = document.getElementById('table-filter-person');
     if (!container) return;
 
     container.innerHTML = '';
     if (filterSel) filterSel.innerHTML = '<option value="">All Persons</option>';
 
+    // Determine all known persons across the entire state
+    const state = (stateOrPortfolios && stateOrPortfolios.portfolios) ? stateOrPortfolios : global.appState;
+    let names = [];
+    if (state) {
+      names = getAllPersonNames(state);
+    } else if (Array.isArray(stateOrPortfolios)) {
+      names = Array.from(new Set(stateOrPortfolios.map(p => p.holder || p._filename || 'Unknown')));
+    }
+
+    // Populate datalist for autocomplete in inputs & modals
+    const datalist = document.getElementById('global-persons-list');
+    if (datalist) {
+      datalist.innerHTML = names.map(n => `<option value="${n}">`).join('');
+    }
+
+    // If no distinct persons at all, hide the person bar
+    if (names.length === 0) {
+      if (personBar) personBar.style.display = 'none';
+      container.style.display = 'none';
+      return;
+    }
+
+    if (personBar) personBar.style.display = 'block';
+    container.style.display = 'flex';
+
     const allTab = document.createElement('button');
     allTab.className = 'person-tab' + (!activeName ? ' active' : '');
-    allTab.textContent = '🔗 All Persons';
+    allTab.textContent = '🔗 All Portfolios';
     allTab.dataset.person = '';
     container.appendChild(allTab);
 
-    const names = Array.from(new Set(portfolios.map(p => p.investor?.name || 'Unknown')));
     names.forEach((name, idx) => {
-      const color = personColor(idx);
+      const color = personColorByName(name);
       const tab = document.createElement('button');
       tab.className = 'person-tab' + (activeName === name ? ' active' : '');
       tab.innerHTML = `<span class="tab-dot" style="background:${color}"></span>${name}`;
@@ -357,8 +443,6 @@
         filterSel.appendChild(opt);
       }
     });
-
-    container.style.display = 'flex';
   }
 
   /* ══════════════════════════════════════════ CHARTS */
@@ -436,7 +520,7 @@
   function buildRows(portfolios) {
     const rows = [];
     portfolios.forEach((portfolio, pIdx) => {
-      const pName = portfolio.investor?.name || portfolio._filename || `Portfolio ${pIdx + 1}`;
+      const pName = portfolio.holder || portfolio._filename || `Portfolio ${pIdx + 1}`;
       const pColor = personColor(pIdx);
       for (const folio of (portfolio.folios || [])) {
         for (const scheme of (folio.schemes || [])) {
@@ -462,7 +546,7 @@
         if (!r.name.toLowerCase().includes(q) && !r.amc.toLowerCase().includes(q)) return false;
       }
       if (catFilter && r.analytics?.category !== catFilter) return false;
-      if (personFilter !== '' && personFilter != null && r.personIdx !== +personFilter) return false;
+      if (personFilter !== '' && personFilter != null && r.personName !== personFilter) return false;
       return true;
     });
   }
@@ -493,6 +577,36 @@
   function renderTable(portfolios, onRowClick) {
     _allRows = buildRows(portfolios);
     renderTableBody(portfolios, onRowClick);
+    renderMFStatements(portfolios);
+  }
+
+  function renderMFStatements(portfolios) {
+    const plist = Array.isArray(portfolios) ? portfolios : (portfolios?.portfolios || []);
+    const section = document.getElementById('mf-statements-section');
+    const tbody = document.getElementById('mf-statements-tbody');
+    if (!section || !tbody) return;
+
+    if (plist.length === 0) { section.style.display = 'none'; return; }
+    section.style.display = '';
+
+    // Use the full state portfolios for the statement list (unfiltered by person)
+    const allPortfolios = global.appState?.portfolios || plist;
+
+    tbody.innerHTML = allPortfolios.map((p, idx) => {
+      const holderVal = p.holder || '';
+      const schemes = (p.folios || []).reduce((n, f) => n + (f.schemes || []).filter(s => parseFloat(s.closingUnits || 0) > 0.001).length, 0);
+      const summary = Analytics.computePortfolioSummary([p], global.appState?.liveNavMap || {});
+      return `<tr>
+        <td><div class="td-fund-name">${p._filename || 'CAS Statement'}</div></td>
+        <td><input type="text" class="mf-stmt-holder-input holder-input" data-idx="${idx}" list="global-persons-list" value="${holderVal}" placeholder="Tag holder..." /></td>
+        <td style="text-align:right">${schemes}</td>
+        <td style="text-align:right">${fmt(summary.totalInvested || 0)}</td>
+        <td style="text-align:right"><strong>${fmt(summary.totalCurrentValue || 0)}</strong></td>
+        <td style="text-align:right">
+          <button class="btn btn-ghost btn-delete-mf-portfolio" data-idx="${idx}" style="padding:4px" title="Delete">🗑️</button>
+        </td>
+      </tr>`;
+    }).join('');
   }
 
   function renderTableBody(portfolios, onRowClick) {
@@ -525,7 +639,6 @@
     const plist = Array.isArray(portfolios) ? portfolios : (portfolios?.portfolios || []);
     const cardsGrid = document.getElementById('mf-cards-view');
     cardsGrid.innerHTML = '';
-    const multiPerson = plist.length > 1;
 
     rows.forEach(r => {
       const a = r.analytics || {};
@@ -569,7 +682,7 @@
           <div class="mf-card-title">${r.name}</div>
           <div class="mf-card-badges">
             <span class="td-cat-badge ${catClass}">${(a.category || 'EQUITY').split('_').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ')}</span>
-            ${multiPerson ? `<span class="td-person-badge" style="background:${r.personColor}22;color:${r.personColor}">${r.personName}</span>` : ''}
+            ${r.personName ? `<span class="td-person-badge" style="background:${r.personColor}22;color:${r.personColor}">👤 ${r.personName}</span>` : ''}
             <span class="pill" style="padding: 2px 8px; font-size: 10px">${fmtUnits(a.units)} units</span>
             ${a.isLiveNav ? '<span class="live-tag">LIVE</span>' : `<span class="cas-tag">CAS ${fmtNav(a.casNav)}</span>`}
           </div>
@@ -778,11 +891,20 @@
     let totalInvested = 0, currentCorpus = 0, totalPnL = 0;
     const allHoldings = [];
 
-    stocksPortfolios.forEach(p => {
-      totalInvested += p._summary.totalInvested || 0;
-      currentCorpus += p._summary.totalCurrentValue || 0;
-      totalPnL += p._summary.totalPnL || 0;
-      allHoldings.push(...(p.holdings || []));
+    stocksPortfolios.forEach((p, pIdx) => {
+      const pSummary = p._summary || {};
+      totalInvested += pSummary.totalInvested || 0;
+      currentCorpus += pSummary.totalCurrentValue || 0;
+      totalPnL += pSummary.totalPnL || 0;
+      const stmtHolder = p.holder || '';
+      (p.holdings || []).forEach((h, hIdx) => {
+        allHoldings.push({
+          ...h,
+          holder: h.holder || stmtHolder,
+          pIdx: pIdx,
+          hIdx: hIdx
+        });
+      });
     });
 
     // Handle Global Stocks Goal
@@ -846,6 +968,7 @@
         const dSign = (h.dayChangePct || 0) >= 0 ? '+' : '';
         return `<tr>
           <td><div class="td-fund-name">${h.instrument}</div></td>
+          <td><input type="text" class="stocks-holding-holder-input holder-input" data-pidx="${h.pIdx}" data-hidx="${h.hIdx}" list="global-persons-list" value="${h.holder || ''}" placeholder="Tag holder..." /></td>
           <td style="text-align:right">${h.qty}</td>
           <td style="text-align:right">${fmt(h.avgCost)}</td>
           <td style="text-align:right">${fmt(h.ltp)}</td>
@@ -860,9 +983,11 @@
     const stmtTbody = document.getElementById('stocks-statements-tbody');
     if (stmtTbody) {
       stmtTbody.innerHTML = stocksPortfolios.map((p, idx) => {
+        const holderVal = p.holder || '';
         return `<tr>
           <td><div class="td-fund-name">${p._filename || 'unnamed.csv'}</div></td>
           <td>${p.broker || 'Zerodha'}</td>
+          <td><input type="text" class="stocks-stmt-holder-input holder-input" data-idx="${idx}" list="global-persons-list" value="${holderVal}" placeholder="Tag holder..." /></td>
           <td style="text-align:right">${fmt(p._summary?.totalInvested || 0)}</td>
           <td style="text-align:right"><strong>${fmt(p._summary?.totalCurrentValue || 0)}</strong></td>
           <td style="text-align:right">
@@ -876,9 +1001,13 @@
   /* ═══════════════════════════════════════════════ LANDING PAGE */
   let landingAllocChart = null;
 
-  function renderLandingPage(state) {
-    const portfolios = state.portfolios;
-    const hasData = portfolios.length > 0
+  function renderLandingPage(state, activePerson) {
+    const pFilter = (activePerson != null && activePerson !== '') ? activePerson : (state.activePerson || '');
+    const portfolios = pFilter 
+      ? (state.portfolios || []).filter(p => p.holder === pFilter)
+      : (state.portfolios || []);
+
+    const hasData = (state.portfolios && state.portfolios.length > 0)
       || (state.stocksPortfolios && state.stocksPortfolios.length > 0)
       || (state.npsPortfolios && state.npsPortfolios.length > 0)
       || (state.savings && (state.savings.accounts.length > 0 || state.savings.fds.length > 0 || state.savings.rds.length > 0))
@@ -897,13 +1026,23 @@
     // ── Indian Stocks ────────────────────────────────────────────────────
     let stocksTotal = 0;
     if (state.stocksPortfolios && state.stocksPortfolios.length > 0) {
-      state.stocksPortfolios.forEach(p => { stocksTotal += p._summary?.totalCurrentValue || 0; });
+      state.stocksPortfolios.forEach(p => {
+        const stmtHolder = p.holder || '';
+        (p.holdings || []).forEach(h => {
+          const hHolder = h.holder || stmtHolder;
+          if (!pFilter || hHolder === pFilter) {
+            stocksTotal += h.currentValue || 0;
+          }
+        });
+      });
     }
 
     // ── NPS ───────────────────────────────────────────────────────────────
     let npsTotal = 0;
     if (state.npsPortfolios && state.npsPortfolios.length > 0) {
       state.npsPortfolios.forEach(portfolio => {
+        const npsHolder = portfolio.holder || '';
+        if (pFilter && npsHolder !== pFilter) return;
         (portfolio.tiers || []).forEach(tier => {
           (tier.schemes || []).forEach(scheme => {
             npsTotal += scheme.analytics?.currentValue || scheme.currentValue || 0;
@@ -917,8 +1056,12 @@
     if (state.foreignEquities?.barclays?.grants?.length > 0) {
       const BARC_PRICE_GBP = 2.52; 
       const GBP_INR = 105.40;
+      const bHolder = state.foreignEquities.barclays.holder || '';
       state.foreignEquities.barclays.grants.forEach(g => {
-        foreignTotal += (parseFloat(g.qty) || 0) * BARC_PRICE_GBP * GBP_INR;
+        const grantHolder = g.holder || bHolder;
+        if (!pFilter || grantHolder === pFilter) {
+          foreignTotal += (parseFloat(g.qty) || 0) * BARC_PRICE_GBP * GBP_INR;
+        }
       });
     }
 
@@ -926,7 +1069,9 @@
     let savingsTotal = 0;
     if (state.savings) {
       [...state.savings.accounts, ...state.savings.fds, ...state.savings.rds].forEach(item => {
-        savingsTotal += (parseFloat(item.balance) || parseFloat(item.principal) || 0);
+        if (!pFilter || item.holder === pFilter) {
+          savingsTotal += (parseFloat(item.balance) || parseFloat(item.principal) || 0);
+        }
       });
     }
 
@@ -934,6 +1079,7 @@
     let nscTotal = 0;
     if (state.nsc) {
         state.nsc.forEach(item => {
+            if (pFilter && item.holder && item.holder !== pFilter) return;
             const principal = parseFloat(item.amount) || 0;
             const rate = (parseFloat(item.rate) || 7.7) / 100;
             const pDate = new Date(item.date);
@@ -951,6 +1097,8 @@
     let epfTotal = 0;
     if (state.epf) {
         state.epf.forEach(item => {
+            const epfHolder = item.holder || item.name || '';
+            if (pFilter && epfHolder && epfHolder !== pFilter) return;
             epfTotal += (parseFloat(item.employeeShare) || 0) + 
                         (parseFloat(item.employerShare) || 0) + 
                         (parseFloat(item.pensionShare) || 0);
@@ -1300,8 +1448,31 @@
     const allCashflows = [];
     let pfmLabel = '';
 
-    npsPortfolios.forEach(portfolio => {
+    npsPortfolios.forEach((portfolio, portfolioIdx) => {
       if (portfolio.pfm) pfmLabel = portfolio.pfm;
+
+      // Determine real index in full state.npsPortfolios (may differ if filtered)
+      const allNpsPortfolios = global.appState?.npsPortfolios || npsPortfolios;
+      const realIdx = allNpsPortfolios.indexOf(portfolio);
+      const displayIdx = realIdx >= 0 ? realIdx : portfolioIdx;
+
+      // ── Portfolio wrapper with holder input ────────────────────────
+      const portfolioWrapper = document.createElement('div');
+      portfolioWrapper.className = 'nps-portfolio-block';
+      portfolioWrapper.style.cssText = 'border:1px solid var(--border); border-radius:12px; padding:16px 20px; margin-bottom:20px;';
+
+      // Holder header row
+      const holderRow = document.createElement('div');
+      holderRow.className = 'table-header-row';
+      holderRow.style.marginBottom = '8px';
+      holderRow.innerHTML = `
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+          <h3 class="table-heading" style="margin:0">${portfolio._filename || `NPS Statement ${portfolioIdx + 1}`}</h3>
+          <input type="text" class="nps-stmt-holder-input holder-input" data-idx="${displayIdx}" list="global-persons-list" value="${portfolio.holder || ''}" placeholder="Tag holder..." style="width:200px" />
+        </div>`;
+      portfolioWrapper.appendChild(holderRow);
+
+      if (tiersContainer) tiersContainer.appendChild(portfolioWrapper);
 
       // ── USE PDF SUMMARY VALUES as source of truth for cards ────
       const pSummary = portfolio._summary || {};
@@ -1367,7 +1538,7 @@
 
         tableHTML += `</tbody></table></div>`;
         tierBlock.innerHTML = headerHTML + tableHTML;
-        if (tiersContainer) tiersContainer.appendChild(tierBlock);
+        portfolioWrapper.appendChild(tierBlock);
       });
 
       // ── SUMMARY CARDS: prefer PDF summary values over computed ones ──
@@ -1481,9 +1652,14 @@
   }
 
   /* ════════════════════════════════════════════════ FOREIGN EQUITIES DASHBOARD */
-  function renderForeignEquitiesDashboard(fnData) {
+  function renderForeignEquitiesDashboard(fnData, activePerson) {
     if (!fnData || !fnData.barclays) return;
-    const { grants = [], goal = '' } = fnData.barclays;
+    const { grants: rawGrants = [], goal = '', holder: barcHolder = '' } = fnData.barclays;
+    const pFilter = (activePerson != null && activePerson !== '') ? activePerson : (global.appState?.activePerson || '');
+
+    const grants = pFilter
+      ? rawGrants.filter(g => (g.holder || barcHolder) === pFilter)
+      : rawGrants;
 
     const BARC_PRICE_GBP = 2.52; 
     const GBP_INR = 105.40;
@@ -1502,9 +1678,11 @@
     const tbody = document.getElementById('barclays-tbody');
     if (tbody) {
       if (grants.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:40px; color:var(--text3)">No grants added yet. Click "Add Grant" to begin.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:40px; color:var(--text3)">No grants added yet. Click "Add Grant" to begin.</td></tr>`;
       } else {
         tbody.innerHTML = grants.map((g, idx) => {
+          const rawIdx = rawGrants.indexOf(g);
+          const actualIdx = rawIdx !== -1 ? rawIdx : idx;
           const qty = (parseFloat(g.qty) || 0);
           const strike = (parseFloat(g.strike) || 0);
           const gDate = new Date(g.date);
@@ -1523,15 +1701,17 @@
           cashflows.push({ date: gDate, amount: -(qty * strike) });
 
           const statusClass = g.status === 'Vested' ? 'positive' : 'warning';
+          const gHolder = g.holder || barcHolder || '';
           
           return `<tr>
             <td><div class="td-fund-name">${fmtDate(g.date)}</div><div class="td-amc">${g.plan || 'ESOP'}</div></td>
+            <td><input type="text" class="barclays-holder-input holder-input" data-idx="${actualIdx}" list="global-persons-list" value="${gHolder}" placeholder="Tag holder..." /></td>
             <td><span style="font-size:11px; font-weight:600; padding:2px 8px; border-radius:12px; background:rgba(var(--${statusClass}-rgb),0.1); color:var(--${statusClass})">${g.status}</span></td>
             <td style="text-align:right">${qty.toLocaleString()}</td>
             <td style="text-align:right">£${strike.toFixed(2)}</td>
             <td style="text-align:right"><strong>£${valGBP.toLocaleString('en-GB', {minimumFractionDigits:2})}</strong></td>
             <td style="text-align:right">
-              <button class="btn-icon btn-delete-esop" data-idx="${idx}" title="Delete" style="background:none; border:none; cursor:pointer; opacity:0.6">🗑️</button>
+              <button class="btn-icon btn-delete-esop" data-idx="${actualIdx}" title="Delete" style="background:none; border:none; cursor:pointer; opacity:0.6">🗑️</button>
             </td>
           </tr>`;
         }).join('');
@@ -1587,8 +1767,11 @@
     }
   }
 
-  function renderNSCDashboard(nscList) {
-    const list = nscList || [];
+  function renderNSCDashboard(nscList, activePerson) {
+    const rawList = nscList || [];
+    const pFilter = (activePerson != null && activePerson !== '') ? activePerson : (global.appState?.activePerson || '');
+    const list = pFilter ? rawList.filter(item => item.holder === pFilter) : rawList;
+
     const tbody = document.getElementById('nsc-tbody');
     const setT = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
 
@@ -1598,7 +1781,7 @@
 
     if (tbody) {
         if (list.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:40px; color:var(--text3)">No NSC certificates added. Click "Add Certificate" to begin.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:40px; color:var(--text3)">No NSC certificates added. Click "Add Certificate" to begin.</td></tr>`;
         } else {
             tbody.innerHTML = list.map(item => {
                 const principal = parseFloat(item.amount) || 0;
@@ -1611,7 +1794,7 @@
                 // Annual compounding formula for NSC: P * (1 + r)^t
                 // Though NSC is technically semi-annual but compounding is annual for interest.
                 const val = principal * Math.pow(1 + rate, Math.max(0, yearsHeld));
-                                const isMatured = maturityDate <= new Date();
+                const isMatured = maturityDate <= new Date();
                 
                 // Auto-clear goal if matured
                 let displayGoal = item.goal || '';
@@ -1634,6 +1817,7 @@
 
                 return `<tr style="${isMatured ? 'opacity:0.75' : ''}">
                     <td><div class="td-fund-name">${item.label}</div></td>
+                    <td><input type="text" class="nsc-holder-input holder-input" data-id="${item.id}" list="global-persons-list" value="${item.holder || ''}" placeholder="Tag holder..." /></td>
                     <td>${goalInputHtml}</td>
                     <td>${fmtDate(item.date)}</td>
                     <td>${fmtDate(maturityDate)}</td>
@@ -1658,8 +1842,11 @@
     setT('nsc-yield', `${yieldPct.toFixed(1)}% Absolute Gain`);
   }
 
-  function renderEPFDashboard(epfList) {
-    const list = epfList || [];
+  function renderEPFDashboard(epfList, activePerson) {
+    const rawList = epfList || [];
+    const pFilter = (activePerson != null && activePerson !== '') ? activePerson : (global.appState?.activePerson || '');
+    const list = pFilter ? rawList.filter(item => (item.holder || item.name) === pFilter) : rawList;
+
     const tbody = document.getElementById('epf-tbody');
     const setT = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
 
@@ -1670,7 +1857,7 @@
 
     if (tbody) {
         if (list.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:40px; color:var(--text3)">No EPF accounts added. Click "Add Account" to begin.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:40px; color:var(--text3)">No EPF accounts added. Click "Add Account" to begin.</td></tr>`;
         } else {
             tbody.innerHTML = list.map(item => {
                 const emp = parseFloat(item.employeeShare) || 0;
@@ -1684,6 +1871,8 @@
                 totalPension += pen;
                 totalMonthly += mth;
 
+                const holderVal = item.holder || item.name || '';
+
                 return `<tr>
                     <td>
                         <div class="td-fund-name">${item.name}</div>
@@ -1695,6 +1884,7 @@
                             ${item.memberId ? `${item.uan ? ' | ' : ''}MID: ${item.memberId}` : ''}
                         </div>
                     </td>
+                    <td><input type="text" class="epf-holder-input holder-input" data-id="${item.id}" list="global-persons-list" value="${holderVal}" placeholder="Tag holder..." /></td>
                     <td><input type="text" class="epf-goal-input goal-input" data-id="${item.id}" list="epf-goals-list" value="${item.goal || ''}" placeholder="Link goal..." /></td>
                     <td style="text-align:right">${fmt(emp)}</td>
                     <td style="text-align:right">${fmt(mbr)}</td>
@@ -1719,9 +1909,14 @@
   /* ════════════════════════════════════════════════ NSC DASHBOARD */
   let _activeSavingsType = 'account';
 
-  function renderSavingsDashboard(savings) {
+  function renderSavingsDashboard(savings, activePerson) {
     if (!savings) return;
-    const { accounts = [], fds = [], rds = [] } = savings;
+    const { accounts: rawAccounts = [], fds: rawFDs = [], rds: rawRDs = [] } = savings;
+    const pFilter = (activePerson != null && activePerson !== '') ? activePerson : (global.appState?.activePerson || '');
+
+    const accounts = pFilter ? rawAccounts.filter(a => a.holder === pFilter) : rawAccounts;
+    const fds = pFilter ? rawFDs.filter(f => f.holder === pFilter) : rawFDs;
+    const rds = pFilter ? rawRDs.filter(r => r.holder === pFilter) : rawRDs;
 
     let totalBank = 0; accounts.forEach(a => totalBank += (parseFloat(a.balance) || 0));
     let totalFD = 0; fds.forEach(f => totalFD += (parseFloat(f.principal) || 0));
@@ -1732,7 +1927,7 @@
     setVal('savings-total-fd', totalFD);
     setVal('savings-total-rd', totalRD);
 
-    const renderTable = (tbodyId, emptyId, data, type) => {
+    const renderTable = (tbodyId, emptyId, data, rawData, type) => {
       const tbody = document.getElementById(tbodyId);
       const empty = document.getElementById(emptyId);
       if (!tbody || !empty) return;
@@ -1742,10 +1937,13 @@
 
       data.forEach((item, idx) => {
         if (!item.id) item.id = Date.now() + Math.random() + idx; // Migration for old entries
+        const rawIdx = rawData.indexOf(item);
+        const actualIdx = rawIdx !== -1 ? rawIdx : idx;
         const tr = document.createElement('tr');
         if (type === 'account') {
           tr.innerHTML = `
             <td><div class="td-fund-name">${item.bank}</div></td>
+            <td><input type="text" class="savings-holder-input holder-input" data-id="${item.id}" data-type="accounts" list="global-persons-list" value="${item.holder || ''}" placeholder="Tag holder..." /></td>
             <td>${item.type}</td>
             <td>
               <input type="text" class="savings-goal-input goal-input" data-id="${item.id}" data-type="accounts" value="${item.goal || ''}" placeholder="Link goal..." />
@@ -1774,11 +1972,12 @@
                 onblur="this.style.borderColor='transparent'; this.style.background='transparent'"
               />
             </td>
-            <td style="text-align:right"><button class="btn btn-ghost" style="padding:4px" onclick="UI.deleteSavings('accounts', ${idx})">🗑️</button></td>
+            <td style="text-align:right"><button class="btn btn-ghost" style="padding:4px" onclick="UI.deleteSavings('accounts', ${actualIdx})">🗑️</button></td>
           `;
         } else {
           tr.innerHTML = `
             <td><div class="td-fund-name">${item.bank}</div></td>
+            <td><input type="text" class="savings-holder-input holder-input" data-id="${item.id}" data-type="${type}s" list="global-persons-list" value="${item.holder || ''}" placeholder="Tag holder..." /></td>
             <td>${fmt(item.principal)}</td>
             <td>${item.rate}%</td>
             <td>${fmtDate(item.maturityDate)}</td>
@@ -1786,16 +1985,16 @@
               <input type="text" class="savings-goal-input goal-input" data-id="${item.id}" data-type="${type}s" value="${item.goal || ''}" placeholder="Link goal..." />
             </td>
             <td style="text-align:right"><strong>${fmt(item.maturityValue)}</strong></td>
-            <td style="text-align:right"><button class="btn btn-ghost" style="padding:4px" onclick="UI.deleteSavings('${type}s', ${idx})">🗑️</button></td>
+            <td style="text-align:right"><button class="btn btn-ghost" style="padding:4px" onclick="UI.deleteSavings('${type}s', ${actualIdx})">🗑️</button></td>
           `;
         }
         tbody.appendChild(tr);
       });
     };
 
-    renderTable('savings-accounts-tbody', 'savings-accounts-empty', accounts, 'account');
-    renderTable('savings-fd-tbody', 'savings-fd-empty', fds, 'fd');
-    renderTable('savings-rd-tbody', 'savings-rd-empty', rds, 'rd');
+    renderTable('savings-accounts-tbody', 'savings-accounts-empty', accounts, rawAccounts, 'account');
+    renderTable('savings-fd-tbody', 'savings-fd-empty', fds, rawFDs, 'fd');
+    renderTable('savings-rd-tbody', 'savings-rd-empty', rds, rawRDs, 'rd');
   }
 
   function openSavingsModal(type) {
@@ -1805,9 +2004,13 @@
     const row2 = document.getElementById('sav-row-2');
     
     // Reset fields
-    ['sav-bank','sav-val-1','sav-val-2','sav-date','sav-rate','sav-goal'].forEach(id => {
+    ['sav-bank','sav-holder','sav-val-1','sav-val-2','sav-date','sav-rate','sav-goal'].forEach(id => {
       const el = document.getElementById(id); if (el) el.value = '';
     });
+    // Auto fill current active person if selected
+    const activeP = global.appState?.activePerson || '';
+    const holderEl = document.getElementById('sav-holder');
+    if (holderEl && activeP) holderEl.value = activeP;
 
     if (type === 'account') {
       title.textContent = 'Add Savings Account';
@@ -1895,7 +2098,7 @@
     toast, showLoading, setLoading, hideLoading,
     renderSummaryCards, renderPersonTabs, renderCharts, renderTable, renderTableBody, initMutualFundUI,
     openTransactionPanel, closeTransactionPanel, setScreen, updateMFViewState,
-    renderLandingPage, renderGoalsDashboard, openGoalManager, deleteGoal, buildRows, personColor, exportFullBackup, importFullData, updateBackupReminder,
+    renderLandingPage, renderGoalsDashboard, openGoalManager, deleteGoal, buildRows, personColor, personColorByName, getAllPersonNames, exportFullBackup, importFullData, updateBackupReminder,
     updateNPSViewState, renderNPSDashboard,
     renderNSCDashboard,
     renderStocksDashboard, updateStocksViewState,

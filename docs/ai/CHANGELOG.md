@@ -4,6 +4,32 @@ All notable developments and architectural milestones for FolioSense.
 
 ---
 
+## 2026-11-13 (Session 2)
+
+### Changed
+- **Manual holder tagging for Mutual Funds and NPS** — removed auto-detection of holder from parsed documents:
+  - MF: Added "Uploaded Statements" table (`#mf-statements-section`) below the holdings card grid. Each uploaded CAS portfolio shows its filename, an inline holder input, active scheme count, invested/current values, and a delete (🗑️) button.
+  - NPS: Each uploaded NPS statement is now wrapped in a styled block with a filename header and an inline "Tag holder..." input, before listing its tier tables below.
+  - Person/holder is now **always manually assigned** for MF and NPS. `investor.name` and `subscriberName` from parsers are no longer used for person identification in the UI layer.
+  - `getAllPersonNames()`, `buildRows()`, `filterRows()`, `renderLandingPage()`, and `refreshDashboard()` all updated to use `p.holder` for MF and NPS.
+  - Added `mf-statements-tbody` onchange/click delegation in `app.js` for real-time holder updates and MF portfolio deletion.
+  - Added `nps-tiers-container` change delegation in `app.js` for real-time NPS holder updates (uses `indexOf` to resolve correct state index even when displayed list is person-filtered).
+
+## 2026-11-13 (Session 1)
+
+### Added
+- **Global Portfolio Segregation by Person / Holder across all asset categories**:
+  - Mutual Funds, NPS, Indian Stocks, Foreign Equities (Barclays), Bank Savings (Accounts, FDs, RDs), NSC, and EPF can now be tagged and segregated by person/holder.
+  - Dedicated sticky `#person-bar` below the primary navigation containing multi-person selector pills (`🔗 All Portfolios`, individual person tabs with personalized color accents).
+  - Person filtering is universally active across all screens: Overview, Goals, Mutual Funds, NPS, Indian Stocks, Foreign Equities, Bank Savings, NSC, and EPF.
+  - Added inline `.holder-input` fields with global datalist autocomplete across all tables (Stocks, Statements, Bank Accounts, FDs, RDs, Barclays Grants, NSC, EPF).
+  - Added Person/Holder input fields to all manual asset creation modals (`savings-modal`, `esop-modal`, `nsc-modal`, `epf-modal`), pre-filled with the active person.
+- **Full Backup Export/Import with Complete Person Segregation**:
+  - `exportFullBackup` now exports complete person segregation metadata (`metadata.persons`, version `1.1`) and preserves holder tags for every holding across all asset classes.
+  - `importFullData` seamlessly restores segregated portfolios and reinstates person tabs on reload.
+
+---
+
 ## 2026-11-12
 
 ### Added

@@ -1,16 +1,33 @@
 # Current State — FolioSense
 
 ## Last Updated
-2026-11-12
+2026-11-13
 
 ---
 
 ## Current Project Status
-FolioSense is fully functional as a client-side multi-asset personal finance tracking application. It supports parsing statements for Mutual Funds (CAS), NPS, Indian Stocks (Zerodha), Foreign Stocks (Barclays), and EPF, along with manual tracking for Bank Savings, FDs, RDs, and NSCs, and a complete financial goal allocation system.
+FolioSense is fully functional as a client-side multi-asset personal finance tracking application. It supports parsing statements for Mutual Funds (CAS), NPS, Indian Stocks (Zerodha), Foreign Stocks (Barclays), and EPF, along with manual tracking for Bank Savings, FDs, RDs, and NSCs, a complete financial goal allocation system, and full portfolio segregation by person/holder across all asset classes.
 
 ---
 
 ## Recently Completed
+- **Manual Holder Tagging for MF & NPS (removes auto-detect from parsed docs)**:
+  - Added "Uploaded Statements" table under the MF holdings view (`#mf-statements-section`, `#mf-statements-tbody`) with one row per uploaded CAS portfolio, showing filename, an inline holder input, active scheme count, invested, current value, and a 🗑️ delete button.
+  - Added per-portfolio holder input inside each NPS portfolio block in `#nps-tiers-container`. Each NPS statement now shows its filename + a "Tag holder..." input at the top of its tier cards.
+  - `getAllPersonNames()` now reads **only** `p.holder` for both MF and NPS portfolios (removed `p.investor?.name` and `p.subscriberName`).
+  - `buildRows()` for MF cards uses `p.holder` as `personName` (not `p.investor?.name`).
+  - `filterRows()` now matches on `r.personName` (string) instead of `r.personIdx` (integer) so person-tab filtering works correctly with name-based holders.
+  - `renderLandingPage()` filters MF by `p.holder` and NPS by `p.holder`.
+  - `refreshDashboard()` in `app.js` filters MF by `p.holder` and NPS by `p.holder`.
+  - Added `mfStmtTable.onchange` and `mfStmtTable.click` delegation in `app.js` for real-time holder tagging and MF portfolio deletion.
+  - Added `npsTiersContainer.addEventListener('change', ...)` delegation in `app.js` for real-time NPS holder tagging. NPS `data-idx` resolves to the real index in `state.npsPortfolios` (using `indexOf`) to remain correct when the displayed list is person-filtered.
+  - `investor.name` / `subscriberName` retained only in deduplication/import logic (finding existing portfolios by PAN/PRAN); completely removed from all UI-layer display, filtering, and person identification logic.
+- **Global Portfolio Segregation by Person / Holder**:
+  - Implemented segregation across all asset categories: Mutual Funds, NPS, Indian Stocks, Foreign Equities (Barclays), Bank Savings (Accounts, FDs, RDs), NSC, and EPF.
+  - Added dedicated sticky `#person-bar` below primary navigation with multi-person tabs and color accents.
+  - Added inline `.holder-input` fields in all asset tables and person/holder inputs in all creation modals with autocomplete (`<datalist id="global-persons-list">`).
+  - Overview screen, summary cards, and individual asset dashboards dynamically filter by the active person.
+  - Full backup JSON export (`exportFullBackup`) and import (`importFullData`) preserve complete person segregation across all holdings.
 - **Goal Persistence across page reloads**: Rewrote goal storage layer (`getGoalsMeta`, `getGoalsMap`, `saveGoal`, `loadGoalsMetadata`, `loadGoalsMap`) with smart-merge logic so that user-entered target amounts, years, return rates, and inflation rates survive page reloads and are never overwritten by blank placeholder defaults. Added `beforeunload` flush for in-flight edits.
 - **Goal card live recalculation**: Target/Years/Return/Inflation inputs now recalculate projections (adjusted target, SIP need, progress bar, status badge) live on `input`/`change` without requiring a full re-render.
 - **Goal Deletion**: Added a delete option (`🗑️`) on each Goal card in the Goals screen, with confirmation, cascading unlinking of all tagged assets across all modules, state persistence, datalist refresh, and empty-state fallback.
@@ -23,7 +40,7 @@ FolioSense is fully functional as a client-side multi-asset personal finance tra
 ---
 
 ## Currently in Progress
-- Repository AI operating and context system bootstrapping (`AGENTS.md`, `docs/ai/*`, `.agents/rules/*`).
+- None.
 
 ---
 

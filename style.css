@@ -109,7 +109,6 @@ table { border-collapse: collapse; width: 100%; }
 .nav-brand { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .brand-logo { width: 32px; height: 32px; border-radius: 8px; }
 .brand-name { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; color: var(--text); }
-#nav-person-tabs { display: flex; gap: 6px; flex: 1; justify-content: center; overflow-x: auto; }
 .nav-actions { display: flex; align-items: center; gap: 12px; margin-left: auto; flex-shrink: 0; }
 .nav-status {
   font-size: 12px;
@@ -125,6 +124,45 @@ table { border-collapse: collapse; width: 100%; }
   animation: pulse 1.5s infinite;
 }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+/* ── Person Segregation Bar ───────────────────────────────────────── */
+.person-bar {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--card-border);
+  padding: 8px 24px;
+  position: sticky;
+  top: 60px;
+  z-index: 95;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+}
+.person-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  overflow-x: auto;
+  max-width: 1400px;
+  width: 100%;
+  justify-content: flex-start;
+}
+.person-bar-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text3);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+}
+.person-tabs-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+}
 
 /* ═══════════════════════════════════════════════════════ BUTTONS */
 .btn {
@@ -572,6 +610,31 @@ table { border-collapse: collapse; width: 100%; }
   background: var(--bg3);
   width: 180px;
   box-shadow: 0 0 15px rgba(16, 185, 129, 0.15);
+}
+
+.holder-input {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 10px;
+  width: 120px;
+  outline: none;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.holder-input:hover {
+  border-color: rgba(59, 130, 246, 0.4);
+  background: rgba(59, 130, 246, 0.05);
+}
+.holder-input:focus {
+  border-color: var(--blue);
+  background: var(--bg3);
+  width: 160px;
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.15);
 }
 .nps-goal-pill {
   display: flex;

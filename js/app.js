@@ -241,13 +241,14 @@
   /* ═══════════════════════════════════════════════ FULL REFRESH */
   function refreshDashboard() {
     try {
+      const activePerson = state.activePerson || '';
       const hasData = state.portfolios.length > 0;
       UI.updateMFViewState(hasData);
       
       if (hasData) {
         // 1. Filter by person
-        const filtered = state.activePerson 
-          ? state.portfolios.filter(p => (p.investor?.name || 'Unknown') === state.activePerson)
+        const filtered = activePerson 
+          ? state.portfolios.filter(p => p.holder === activePerson)
           : state.portfolios;
 
         // 2. Compute Summary & Rows
@@ -258,11 +259,13 @@
         UI.renderSummaryCards(summary);
         UI.renderCharts(rows);
         UI.renderTable(filtered, (row) => UI.openTransactionPanel(row));
-        UI.renderPersonTabs(state.portfolios, state.activePerson);
       }
       
+      // Global Person Tabs across all assets
+      UI.renderPersonTabs(state, activePerson);
+
       // Update Overview Screen View
-      UI.renderLandingPage(state);
+      UI.renderLandingPage(state, activePerson);
       
       // ── NPS ─────────────────────────────────────────────────────────────
       if (state.npsPortfolios) {
@@ -270,12 +273,33 @@
           p.tiers && p.tiers.some(t => t.schemes && t.schemes.length > 0)
         );
         const hasNPS = state.npsPortfolios.length > 0;
-        if (hasNPS) UI.renderNPSDashboard(state.npsPortfolios);
+        if (hasNPS) {
+          const filteredNPS = activePerson
+            ? state.npsPortfolios.filter(p => p.holder === activePerson)
+            : state.npsPortfolios;
+          UI.renderNPSDashboard(filteredNPS);
+        }
         UI.updateNPSViewState(hasNPS);
       }
 
       if (state.stocksPortfolios && state.stocksPortfolios.length > 0) {
-        UI.renderStocksDashboard(state.stocksPortfolios);
+        const filteredStocks = activePerson
+          ? state.stocksPortfolios.map(p => {
+              const stmtHolder = p.holder || '';
+              const matchedHoldings = (p.holdings || []).filter(h => (h.holder || stmtHolder) === activePerson);
+              return {
+                ...p,
+                holdings: matchedHoldings,
+                _summary: {
+                  ...p._summary,
+                  totalInvested: matchedHoldings.reduce((s, h) => s + (h.invested || 0), 0),
+                  totalCurrentValue: matchedHoldings.reduce((s, h) => s + (h.currentValue || 0), 0),
+                  totalPnL: matchedHoldings.reduce((s, h) => s + (h.pnl || 0), 0)
+                }
+              };
+            }).filter(p => p.holder === activePerson || p.holdings.length > 0)
+          : state.stocksPortfolios;
+        UI.renderStocksDashboard(filteredStocks);
         UI.updateStocksViewState(true);
       } else {
         UI.updateStocksViewState(false);
@@ -283,23 +307,23 @@
 
       // ── Foreign Stocks ──────────────────────────────────────────────────
       if (state.foreignEquities) {
-        UI.renderForeignEquitiesDashboard(state.foreignEquities);
+        UI.renderForeignEquitiesDashboard(state.foreignEquities, activePerson);
       }
 
       if (state.nsc) {
-        UI.renderNSCDashboard(state.nsc);
+        UI.renderNSCDashboard(state.nsc, activePerson);
       }
 
       if (state.epf) {
-        UI.renderEPFDashboard(state.epf);
+        UI.renderEPFDashboard(state.epf, activePerson);
       }
 
       if (state.savings) {
-        UI.renderSavingsDashboard(state.savings);
+        UI.renderSavingsDashboard(state.savings, activePerson);
       }
       
-    UI.updateBackupReminder(state.isDirtySinceExport);
-    saveState();
+      UI.updateBackupReminder(state.isDirtySinceExport);
+      saveState();
     } catch (err) {
       console.error('Refresh Dashboard Detailed Error:', err);
       // Fallback: at least try to render bank records if everything else crashes
@@ -634,7 +658,17 @@
       document.getElementById('esop-modal').style.display = 'none';
     });
 
+    setClick('btn-add-esop', () => {
+      const modal = document.getElementById('esop-modal');
+      if (modal) {
+        modal.style.display = 'flex';
+        const holderEl = document.getElementById('esop-holder');
+        if (holderEl) holderEl.value = state.activePerson || state.foreignEquities?.barclays?.holder || '';
+      }
+    });
+
     setClick('esop-submit', () => {
+      const holder = (document.getElementById('esop-holder')?.value || '').trim();
       const date = document.getElementById('esop-date').value;
       const qty  = document.getElementById('esop-qty').value;
       const strike = document.getElementById('esop-strike').value;
@@ -649,21 +683,28 @@
         date: new Date(date), 
         qty: parseFloat(qty), 
         strike: parseFloat(strike), 
-        status: status 
+        status: status,
+        holder: holder
       });
 
+      if (holder && !state.foreignEquities.barclays.holder) {
+        state.foreignEquities.barclays.holder = holder;
+      }
+
+      state.isDirtySinceExport = true;
       saveState();
-      UI.renderForeignEquitiesDashboard(state.foreignEquities);
+      refreshDashboard();
       document.getElementById('esop-modal').style.display = 'none';
       
       // Clear inputs
       document.getElementById('esop-qty').value = '';
       document.getElementById('esop-strike').value = '';
+      if (document.getElementById('esop-holder')) document.getElementById('esop-holder').value = '';
       
       UI.toast('success', 'Grant Added', 'New Barclays ESOP grant recorded.');
     });
 
-    // Delete ESOP (delegated)
+    // Delete ESOP (delegated) & Inline Holder Change
     const baTable = document.getElementById('barclays-tbody');
     if (baTable) {
         baTable.onclick = (e) => {
@@ -674,6 +715,21 @@
                     saveState();
                     UI.renderForeignEquitiesDashboard(state.foreignEquities);
                     UI.toast('info', 'Grant Removed', 'The grant has been deleted.');
+                }
+            }
+        };
+
+        baTable.onchange = (e) => {
+            if (e.target.classList.contains('barclays-holder-input')) {
+                const idx = parseInt(e.target.dataset.idx);
+                const newHolder = e.target.value.trim();
+                const grant = state.foreignEquities.barclays.grants[idx];
+                if (grant) {
+                    grant.holder = newHolder;
+                    state.isDirtySinceExport = true;
+                    saveState();
+                    refreshDashboard();
+                    UI.toast('info', 'Holder Updated', `Grant tagged to "${newHolder || 'All'}".`);
                 }
             }
         };
@@ -749,6 +805,7 @@
       const entry = {
         id: Date.now() + Math.random(),
         bank: bankName,
+        holder: (document.getElementById('sav-holder')?.value || '').trim() || state.activePerson || '',
         goal: document.getElementById('sav-goal').value.trim(),
       };
 
@@ -782,6 +839,8 @@
             document.getElementById('nsc-date').value = '';
             document.getElementById('nsc-rate').value = '7.7';
             document.getElementById('nsc-goal-input').value = '';
+            const holderEl = document.getElementById('nsc-holder-input');
+            if (holderEl) holderEl.value = state.activePerson || '';
             
             modal.style.display = 'flex';
             const dl = document.getElementById('nsc-goals-list');
@@ -799,6 +858,7 @@
 
     setClick('nsc-submit', () => {
         const label = document.getElementById('nsc-id').value.trim() || 'NSC Certificate';
+        const holder = (document.getElementById('nsc-holder-input')?.value || '').trim() || state.activePerson || '';
         const amount = parseFloat(document.getElementById('nsc-amount').value) || 0;
         const date = document.getElementById('nsc-date').value;
         const rate = parseFloat(document.getElementById('nsc-rate').value) || 0;
@@ -809,7 +869,7 @@
             return;
         }
 
-        const newEntry = { id: Date.now(), label, amount, date, rate, goal };
+        const newEntry = { id: Date.now(), label, holder, amount, date, rate, goal };
         state.nsc.push(newEntry);
 
         if (goal && !state.goalsMetadata[goal]) {
@@ -847,9 +907,114 @@
         }
     });
 
+    // Indian Stocks Statement & Holding Holder Change Delegation
+    const stocksTable = document.getElementById('stocks-tbody');
+    if (stocksTable) {
+        stocksTable.onchange = (e) => {
+            if (e.target.classList.contains('stocks-holding-holder-input')) {
+                const pIdx = parseInt(e.target.dataset.pidx);
+                const hIdx = parseInt(e.target.dataset.hidx);
+                const newHolder = e.target.value.trim();
+                const holding = state.stocksPortfolios[pIdx]?.holdings?.[hIdx];
+                if (holding) {
+                    holding.holder = newHolder;
+                    state.isDirtySinceExport = true;
+                    saveState();
+                    refreshDashboard();
+                    UI.toast('info', 'Holder Updated', `Holding tagged to "${newHolder || 'All'}".`);
+                }
+            }
+        };
+    }
+
+    const stocksStmtTable = document.getElementById('stocks-statements-tbody');
+    if (stocksStmtTable) {
+        stocksStmtTable.onchange = (e) => {
+            if (e.target.classList.contains('stocks-stmt-holder-input')) {
+                const idx = parseInt(e.target.dataset.idx);
+                const newHolder = e.target.value.trim();
+                const port = state.stocksPortfolios[idx];
+                if (port) {
+                    port.holder = newHolder;
+                    // Also propagate to holdings that don't have an individual holder
+                    (port.holdings || []).forEach(h => {
+                        if (!h.holder) h.holder = newHolder;
+                    });
+                    state.isDirtySinceExport = true;
+                    saveState();
+                    refreshDashboard();
+                    UI.toast('info', 'Holder Updated', `Stocks statement tagged to "${newHolder || 'All'}".`);
+                }
+            }
+        };
+    }
+
+    // MF Statements holder change delegation
+    const mfStmtTable = document.getElementById('mf-statements-tbody');
+    if (mfStmtTable) {
+        mfStmtTable.onchange = (e) => {
+            if (e.target.classList.contains('mf-stmt-holder-input')) {
+                const idx = parseInt(e.target.dataset.idx);
+                const newHolder = e.target.value.trim();
+                const port = state.portfolios[idx];
+                if (port) {
+                    port.holder = newHolder;
+                    state.isDirtySinceExport = true;
+                    saveState();
+                    refreshDashboard();
+                    UI.toast('info', 'Holder Updated', `MF statement tagged to "${newHolder || 'All'}".`);
+                }
+            }
+        };
+        mfStmtTable.addEventListener('click', (e) => {
+            const delBtn = e.target.closest('.btn-delete-mf-portfolio');
+            if (delBtn) {
+                const idx = parseInt(delBtn.dataset.idx);
+                if (confirm('Are you sure you want to remove this MF portfolio statement?')) {
+                    state.portfolios.splice(idx, 1);
+                    saveState();
+                    refreshDashboard();
+                    UI.toast('info', 'Portfolio Removed', 'MF statement removed.');
+                }
+            }
+        });
+    }
+
+    // NPS holder change delegation (uses event delegation on the container)
+    const npsTiersContainer = document.getElementById('nps-tiers-container');
+    if (npsTiersContainer) {
+        npsTiersContainer.addEventListener('change', (e) => {
+            if (e.target.classList.contains('nps-stmt-holder-input')) {
+                const idx = parseInt(e.target.dataset.idx);
+                const newHolder = e.target.value.trim();
+                const port = state.npsPortfolios[idx];
+                if (port) {
+                    port.holder = newHolder;
+                    state.isDirtySinceExport = true;
+                    saveState();
+                    refreshDashboard();
+                    UI.toast('info', 'Holder Updated', `NPS statement tagged to "${newHolder || 'All'}".`);
+                }
+            }
+        });
+    }
+
     const nscTable = document.getElementById('nsc-tbody');
     if (nscTable) {
         nscTable.onchange = (e) => {
+            if (e.target.classList.contains('nsc-holder-input')) {
+                const id = parseInt(e.target.dataset.id);
+                const newHolder = e.target.value.trim();
+                const cert = state.nsc.find(n => n.id === id);
+                if (cert) {
+                    cert.holder = newHolder;
+                    state.isDirtySinceExport = true;
+                    saveState();
+                    refreshDashboard();
+                    UI.toast('info', 'Holder Updated', `NSC certificate tagged to "${newHolder || 'All'}".`);
+                }
+            }
+
             if (e.target.classList.contains('nsc-goal-input')) {
                 const id = parseInt(e.target.dataset.id);
                 const newGoal = e.target.value.trim();
@@ -867,8 +1032,22 @@
         };
     }
 
-    // Bank Savings Goal + Balance Delegation
+    // Bank Savings Goal + Balance + Holder Delegation
     const handleSavingsGoalChange = (e) => {
+        if (e.target.classList.contains('savings-holder-input')) {
+            const id = parseFloat(e.target.dataset.id);
+            const type = e.target.dataset.type; // accounts, fds, or rds
+            const newHolder = e.target.value.trim();
+            const entry = state.savings[type].find(n => n.id === id);
+            if (entry) {
+                entry.holder = newHolder;
+                state.isDirtySinceExport = true;
+                saveState();
+                refreshDashboard();
+                UI.toast('info', 'Holder Updated', `Savings entry tagged to "${newHolder || 'All'}".`);
+            }
+        }
+
         if (e.target.classList.contains('savings-goal-input')) {
             const id = parseFloat(e.target.dataset.id);
             const type = e.target.dataset.type; // accounts, fds, or rds
@@ -915,6 +1094,19 @@
     const epfTable = document.getElementById('epf-tbody');
     if (epfTable) {
         epfTable.onchange = (e) => {
+            if (e.target.classList.contains('epf-holder-input')) {
+                const id = parseInt(e.target.dataset.id);
+                const newHolder = e.target.value.trim();
+                const acct = state.epf.find(n => n.id === id);
+                if (acct) {
+                    acct.holder = newHolder;
+                    state.isDirtySinceExport = true;
+                    saveState();
+                    refreshDashboard();
+                    UI.toast('info', 'Holder Updated', `EPF account tagged to "${newHolder || 'All'}".`);
+                }
+            }
+
             if (e.target.classList.contains('epf-goal-input')) {
                 const id = parseInt(e.target.dataset.id);
                 const newGoal = e.target.value.trim();
@@ -937,7 +1129,7 @@
         const modal = document.getElementById('epf-modal');
         if (modal) {
             // Clear inputs
-            document.getElementById('epf-name').value = '';
+            document.getElementById('epf-name').value = state.activePerson || '';
             document.getElementById('epf-employee').value = '';
             document.getElementById('epf-employer').value = '';
             document.getElementById('epf-monthly').value = '';
@@ -958,7 +1150,7 @@
     });
 
     setClick('epf-submit', () => {
-        const name = document.getElementById('epf-name').value.trim() || 'EPF Account';
+        const name = document.getElementById('epf-name').value.trim() || state.activePerson || 'EPF Account';
         const emp = parseFloat(document.getElementById('epf-employee').value) || 0;
         const mbr = parseFloat(document.getElementById('epf-employer').value) || 0;
         const pen = parseFloat(document.getElementById('epf-pension').value) || 0;
@@ -972,7 +1164,8 @@
 
         const newEntry = { 
             id: Date.now(), 
-            name, 
+            name,
+            holder: name, 
             employeeShare: emp, 
             employerShare: mbr, 
             pensionShare: pen,
